@@ -37,6 +37,9 @@ module "network" {
   # estar apagado cueste ~$0 en vez de ~$7,20/dia. Se puede forzar con
   # var.endpoints_activos si hace falta dejarlos fijos.
   endpoints_activos = var.endpoints_activos != null ? var.endpoints_activos : var.desired_count > 0
+
+  # El IGW y la ruta 0.0.0.0/0. Apagado, esta VPC no tiene salida a internet.
+  acceso_externo = var.acceso_externo
 }
 
 # ── Seguridad · T-03 ──────────────────────────────────────────────────────
@@ -47,6 +50,10 @@ module "security" {
   tenants     = var.tenants
   vpc_ids     = module.network.vpc_ids
   vpc_cidrs   = module.network.vpc_cidrs
+
+  # El security group del bastion y las reglas que le dejan alcanzar los
+  # servicios y las bases. Nada de esto expone un puerto a internet.
+  acceso_externo = var.acceso_externo
 }
 
 # ── Mensajeria · T-04 ─────────────────────────────────────────────────────
@@ -58,6 +65,43 @@ module "messaging" {
   rol_c3_id    = module.security.rol_c3_name
   rol_c4_id    = module.security.rol_c4_name
   rol_c3_arn   = module.security.rol_c3_arn
+}
+
+# ── Cola de DESARROLLO LOCAL · aparte de la del despliegue ────────────────
+#
+# ⚠ POR QUE EXISTE. `c3/.env` y `c4/.env` apuntan a una cola de verdad en AWS
+#   —el pipeline local firma con KMS real y publica a SQS real, que es lo que
+#   hace que la prueba local valga algo—. Con UNA sola cola, el C4 de tu
+#   portatil y el C4 de Fargate son DOS CONSUMIDORES COMPETIDORES: SQS reparte
+#   los mensajes entre los dos y cada uno se lleva la mitad.
+#
+#   Y no falla: cada mitad se descifra, se verifica y se persiste sin un solo
+#   error. Simplemente el inbox de AWS acusa la mitad de los eventos, P4 da un
+#   falso negativo y el hueco parece un problema de red o de la cola.
+#
+#   Medido: 105 eventos publicados, 56 en el inbox de C4 en AWS y 49 en el
+#   `rpf_c4` local. Las metricas de la cola decian 105 enviados, 105 recibidos
+#   y 105 borrados — porque los 105 SI se entregaron, solo que a dos sitios.
+#
+# La cola local es identica en configuracion a la del despliegue: mismo dedup
+# por grupo, mismo cifrado, misma DLQ, mismo visibility timeout. Tiene que
+# serlo, o lo que pruebas en local no es lo que corre en AWS.
+
+module "messaging_local" {
+  count  = var.cola_local ? 1 : 0
+  source = "../modules/messaging"
+
+  name_prefix  = "${var.name_prefix}-local"
+  kms_cola_arn = module.security.kms_cola_arn
+  rol_c3_id    = module.security.rol_c3_name
+  rol_c4_id    = module.security.rol_c4_name
+  rol_c3_arn   = module.security.rol_c3_arn
+
+  # Aca publica y consume tu usuario, no el rol de una task. Y no es opcional:
+  # las politicas de identidad del modulo son inline y con nombre fijo sobre los
+  # MISMOS roles, asi que la segunda instancia sobrescribiria a la primera. Ver
+  # la variable.
+  permisos_de_task = false
 }
 
 # ── Registro de imagenes ──────────────────────────────────────────────────
@@ -170,6 +214,9 @@ module "tenant" {
 
   desired_count      = var.desired_count
   log_retention_days = var.log_retention_days
+
+  # IP publica en la task (:8080) y endpoint publico en su RDS (:5432).
+  acceso_externo = var.acceso_externo
 }
 
 # ── C4 · T-06 ─────────────────────────────────────────────────────────────
@@ -201,8 +248,23 @@ module "c4" {
   cola_url         = module.messaging.cola_url
   dlq_url          = module.messaging.dlq_url
 
-  desired_count      = var.desired_count
+  # ⚠ EL UNICO SERVICIO QUE NO RECIBE `desired_count` A SECAS.
+  #
+  # `desired_count` sigue siendo el interruptor de T-07: si esta en 0, C4 no
+  # corre, punto. Pero cuando esta encendido, cuantas replicas hay lo decide
+  # `c4_replicas` — porque C4 es lo unico de la PoC que se puede escalar
+  # horizontal sin cambiar lo que se mide. Ver la variable.
+  desired_count      = var.desired_count > 0 ? var.c4_replicas : 0
   log_retention_days = var.log_retention_days
+
+  # IP publica en la task (:3003), endpoint publico en su RDS (:5432) y
+  # C4_HEALTH_HOST=0.0.0.0 — un proceso en loopback no se alcanza desde fuera.
+  acceso_externo = var.acceso_externo
+
+  # El ritmo del consumidor. Ver las variables: la concurrencia no rompe el
+  # orden, pero `lote_transaccion` SI cambia lo que mide P1.
+  concurrencia     = var.c4_concurrencia
+  lote_transaccion = var.c4_lote_transaccion
 }
 
 # ── Orquestador · T-06 ────────────────────────────────────────────────────
@@ -223,6 +285,42 @@ module "orq" {
   imagen_driver = local.imagenes.driver
   api_hosts     = module.tenant.api_hosts
 
+  # Se registra como `orq.poc.local` en la zona de C3, para que el tunel del
+  # bastion apunte a un nombre y no a una IP que caduca.
+  namespace_id = module.network.namespace_c3_id
+
   desired_count      = var.desired_count
   log_retention_days = var.log_retention_days
+}
+
+# ── Bastiones · UNO POR VPC, y solo con acceso_externo ────────────────────
+#
+# ⚠ DOS, no uno, y no es una eleccion de diseno: la RDS de C4 vive en la VPC de
+#   C4 y NO HAY RUTA entre C3 y C4. Un bastion en C3 no la alcanza. Eso es
+#   exactamente el invariante que la PoC demuestra — si un dia UN solo bastion
+#   llegara a las dos, es que alguien abrio un camino que no deberia existir.
+#
+# El de C3 alcanza el orquestador, los N API y las N bases de los tenants: los
+# 50 viven en esa VPC, asi que el coste es el mismo con 1 tenant que con 200.
+#
+# Cuestan ~$0,24/dia cada uno. Se van enteros con `--sin-acceso-externo`.
+
+module "bastion_c3" {
+  count  = var.acceso_externo ? 1 : 0
+  source = "../modules/bastion"
+
+  name_prefix = var.name_prefix
+  vpc         = "c3"
+  subnet_id   = module.network.subnets_app["c3"][0]
+  sg_id       = module.security.sg_bastion_ids["c3"]
+}
+
+module "bastion_c4" {
+  count  = var.acceso_externo ? 1 : 0
+  source = "../modules/bastion"
+
+  name_prefix = var.name_prefix
+  vpc         = "c4"
+  subnet_id   = module.network.subnets_app["c4"][0]
+  sg_id       = module.security.sg_bastion_ids["c4"]
 }

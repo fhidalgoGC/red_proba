@@ -25,7 +25,7 @@ variable "endpoints_activos" {
   description = <<-D
     ⚠ LOS INTERFACE ENDPOINTS FACTURAN AUNQUE NO CORRA NADA.
     Cobran ~$0,01 por hora POR ENI, y hay una ENI por AZ por endpoint.
-    Con 12 endpoints y 2 AZ son 24 ENIs = ~$0,24/h = ~$5,76/dia — con
+    Con 14 endpoints y 2 AZ son 28 ENIs = ~$0,28/h = ~$6,72/dia — con
     cero computo. (Eran 15 cuando ORQ tenia VPC propia; al mudarse a la de
     C3 reutiliza ecr+logs de C3 y se ahorran 3.)
 
@@ -35,4 +35,18 @@ variable "endpoints_activos" {
     El precio a pagar: encender tarda unos minutos mas mientras los
     endpoints se recrean y el DNS privado propaga.
   D
+}
+
+variable "acceso_externo" {
+  type        = bool
+  description = <<-D
+    Crear un Internet Gateway por VPC y la ruta 0.0.0.0/0.
+
+    ⚠ Apaga la propiedad "ninguna subnet tiene ruta a internet". NO afecta al
+      invariante que la PoC demuestra -no hay camino entre C3 y C4-, porque
+      ninguna ruta apunta al CIDR de la otra VPC.
+
+    Ver acceso-externo.tf.
+  D
+  default     = false
 }

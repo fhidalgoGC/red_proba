@@ -1,7 +1,7 @@
 /**
  * G-08 · Vuelca lo que C4 tiene, para poder conciliarlo contra lo que salio.
  *
- *   npm run informe -- [--desde <ISO>] [--nombre <prueba>] [--salida <ruta>]
+ *   npm run informe -- [--prueba <id>] [--desde <ISO>] [--nombre <n>] [--salida <ruta>]
  *
  * Escribe `c4/logs/<nombre>__inbox.json`, que es la mitad "llegado" de P4. La
  * otra mitad la escribe el orquestador (`<prueba>__manifiesto.json`) y las
@@ -13,9 +13,23 @@
  * cuenta del operador neutro. Esto corre despues de la corrida, contra la
  * base, y no toca el proceso que consume.
  *
- * ⚠ USA `--desde`. La base de C4 sobrevive a la corrida: sin corte temporal
- * el volcado arrastra los expedientes de todas las pruebas anteriores y la
- * conciliacion los reporta como desconocidos por centenares.
+ * ⚠ RECORTA, O EL VOLCADO MIENTE. La base de C4 sobrevive a la corrida: sin
+ * corte, arrastra los expedientes de todas las pruebas anteriores y la
+ * conciliacion los reporta como desconocidos por centenares. Hay dos cortes:
+ *
+ *   --prueba <id>   EXACTO. Filtra por la columna `inbox.prueba`, que es el id
+ *                   de corrida que genero el orquestador y que viajo hasta
+ *                   aqui en el MessageAttribute `prueba` del mensaje. Es el
+ *                   que hay que usar: distingue dos corridas que se solapan y
+ *                   no depende de acertar una hora.
+ *   --desde <ISO>   APROXIMADO, por `e7_recibido`. El corte de antes de que el
+ *                   id llegara hasta C4, y el unico que sirve para mensajes
+ *                   publicados sin el atributo.
+ *
+ * Sin `--nombre`, el archivo toma el nombre de `--prueba` — asi
+ * `<id>__inbox.json` queda al lado del `<id>__c4.json` que escribe el
+ * consumidor y de los del orquestador y C3, y `npm run conciliar` los
+ * encuentra sin que nadie tenga que renombrar nada.
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -34,7 +48,12 @@ async function main(): Promise<void> {
     throw new Error(`--desde '${desde}' no es una fecha ISO valida`);
   }
 
-  const nombre = arg('nombre') ?? sello();
+  const prueba = arg('prueba');
+  // El nombre por defecto es el id de corrida: es lo que hace que los cuatro
+  // archivos de una prueba —orquestador, C3, y los dos de C4— compartan
+  // prefijo. El sello de fecha solo aparece cuando no hay ni id ni nombre, que
+  // es el volcado suelto de quien esta mirando la base a mano.
+  const nombre = arg('nombre') ?? prueba ?? sello();
 
   // El ConfigService de C4 exige la cola porque el consumidor no existe sin
   // ella. Este CLI no lee de la cola: solo mira la base. Se le da un valor de
@@ -51,14 +70,15 @@ async function main(): Promise<void> {
 
   try {
     const [expedientes, conciliacion, huecos] = await Promise.all([
-      inbox.expedientes(desde),
-      inbox.conciliacion(),
+      inbox.expedientes(desde, prueba),
+      inbox.conciliacion(prueba),
       inbox.huecos(),
     ]);
 
     const volcado = {
       generado: new Date().toISOString(),
       esquema: config.bdEsquema,
+      prueba,
       desde,
       totales: {
         inbox: expedientes.reduce((n, e) => n + e.vistos, 0),
@@ -78,7 +98,11 @@ async function main(): Promise<void> {
       })),
     };
 
-    const dir = resolve(arg('salida') ?? process.env.C4_LOGS_DIR ?? join(__dirname, '..', '..', 'logs'));
+    // La carpeta la decide el ConfigService (`C4_LOGS_DIR`), que es la misma
+    // que sirve `GET /logs/:id`. `--salida` sigue mandando por encima, pero lo
+    // que se deje ahi el endpoint no lo va a encontrar.
+    const salida = arg('salida');
+    const dir = salida ? resolve(salida) : config.dirLogs;
     mkdirSync(dir, { recursive: true });
     const destino = join(dir, `${nombre}__inbox.json`);
 
@@ -91,6 +115,15 @@ async function main(): Promise<void> {
       `${volcado.totales.expedientes} expediente(s) · ${volcado.totales.inbox} evento(s) unicos · ` +
       `${volcado.totales.duplicados} duplicado(s) · ${huecos.length} hueco(s) interior(es)\n${destino}`,
     );
+    if (!prueba && !desde) {
+      // Sin corte el volcado es la base ENTERA. No se falla —puede ser lo que
+      // se queria— pero decirlo evita que alguien concilie una corrida contra
+      // el acumulado de todas y lea el sobrante como eventos desconocidos.
+      console.warn(
+        '⚠ sin --prueba ni --desde: esto es TODA la base, no una corrida. ' +
+        'La conciliacion de P4 contara como desconocidos los expedientes de pruebas anteriores.',
+      );
+    }
   } finally {
     await bd.onApplicationShutdown();
   }

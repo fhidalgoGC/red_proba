@@ -13,6 +13,7 @@ El OpenAPI en crudo, para importar a Postman: `http://localhost:3000/docs-json`
 | `GET` | `/status/tenants` | Desglose por tenant |
 | `GET` | `/status/serie?segundos=120` | La serie segundo a segundo |
 | `GET` | `/status/plan` | El reparto tal como lo calculó el planificador |
+| `GET` | `/logs/{id}` | **Descarga** `logs/<id>.json` |
 | `GET` | `/health` | Salud del contenedor |
 
 ---
@@ -182,6 +183,31 @@ El informe completo del log. Ver [03-informe](03-informe.md).
 ```jsonc
 { "estado": "terminado", "prueba": "xx01", "resumen": { … }, "tenants": { … } }
 ```
+
+---
+
+## `GET /logs/{id}`
+
+El JSON del informe **tal como está en disco**, servido como adjunto. Es para
+bajárselo sin entrar al contenedor: en AWS los logs viven en el disco efímero de
+la task, y la task muere en cuanto se apaga el despliegue (T-07).
+
+```bash
+curl -OJ localhost:3000/logs/xx01                # → xx01.json
+curl -OJ localhost:3000/logs/xx01__manifiesto    # → el manifiesto de O-08
+```
+
+El `id` es el de la prueba — el mismo que se le pasó al `POST /batch` y que sale
+en `GET /status` como `config.prueba`. Como el archivo se llama `<id>.json`,
+pidiendo `<id>__manifiesto` sale también el manifiesto de expedientes, que es el
+otro JSON que escribe el registro. Los ids que hay están en `GET /batch`, y un
+404 los lista igualmente.
+
+> ⚠ **Sirve el archivo, no la memoria.** Durante una corrida viva el informe se
+> reescribe cada pocos segundos, así que este endpoint puede ir por detrás de lo
+> que está pasando. Para el dato al instante están `/status` y `/status/serie`,
+> que se reconstruyen en cada llamada. `GET /batch/{id}` da lo mismo pero
+> resumido y sin descargar.
 
 ---
 

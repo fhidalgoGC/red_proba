@@ -56,7 +56,15 @@ export interface Manifiesto {
 export interface VolcadoInbox {
   generado: string;
   esquema: string;
-  /** Corte temporal aplicado sobre `e7_recibido`, o null si se volco todo. */
+  /**
+   * El id de corrida por el que se filtro (`inbox.prueba`), o null.
+   *
+   * Es el corte EXACTO: el mismo id que este manifiesto lleva en `prueba`. Si
+   * los dos estan puestos y no coinciden, se estan cruzando dos corridas
+   * distintas y el resultado no significa nada.
+   */
+  prueba?: string | null;
+  /** Corte temporal sobre `e7_recibido`, o null. Aproximado; ver `prueba`. */
   desde: string | null;
   totales: {
     inbox: number;

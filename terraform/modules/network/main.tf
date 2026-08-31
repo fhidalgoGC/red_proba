@@ -44,9 +44,14 @@ locals {
   # PROVISIONING. Alcanzarlos a nivel de red no le da nada de C4: su task
   # role no tiene sqs ni kms, y la resource policy de la cola solo nombra
   # a los roles de C3 y C4.
+  #
+  # `ssmmessages` es el de ECS Exec, y sin el no hay forma de LANZAR una
+  # corrida: el POST /batch del orquestador vive en una subnet privada y no hay
+  # IGW, NAT ni balanceador que lleve hasta ahi. Es una sesion saliente, no un
+  # puerto abierto — ver modules/security/exec.tf.
   endpoints = {
-    c3 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
-    c4 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
+    c3 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs", "ssmmessages"]
+    c4 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs", "ssmmessages"]
   }
 }
 

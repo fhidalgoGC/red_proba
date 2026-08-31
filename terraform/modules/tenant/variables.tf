@@ -63,3 +63,9 @@ variable "log_retention_days" {
   type    = number
   default = 1
 }
+
+variable "acceso_externo" {
+  type        = bool
+  description = "IP publica en la task y endpoint publico en RDS. Ver modules/network/acceso-externo.tf."
+  default     = false
+}

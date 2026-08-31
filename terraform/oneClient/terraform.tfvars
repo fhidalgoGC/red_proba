@@ -8,12 +8,23 @@ name_prefix = "rpf-one"
 
 # Identificador de corrida. Bumpear antes de cada carga para poder
 # atribuirle el costo. Sin granularidad horaria: UNA corrida por dia.
-run_id = "2026-08-29-humo"
+run_id = "2026-08-31-humo"
 
 # ── T-07 · La perilla ─────────────────────────────────────────────────────
 # 0 = infra creada, cero computo, no hace falta que existan las imagenes.
 # 1 = servicios corriendo.
 desired_count = 0
+
+# ── Consumidores de C4 ────────────────────────────────────────────────────
+# Aparte de desired_count, que es el interruptor de T-07 y lo comparten los
+# tres servicios. Ver variables.tf: subir desired_count daria tambien dos
+# orquestadores, y eso rompe la medicion.
+c4_replicas = 2
+
+# Ritmo del consumidor. La concurrencia no cambia lo que se mide; el lote
+# transaccional SI: e9→e10 pasa a medir el lote y no el evento.
+c4_concurrencia     = 8
+c4_lote_transaccion = true
 
 # Tag de las imagenes en ECR. "humo" para las prestadas de la fase 1.
 imagen_tag = "humo"

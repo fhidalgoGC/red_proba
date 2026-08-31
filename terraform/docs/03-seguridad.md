@@ -83,9 +83,25 @@ intercambiables**: C3 y C4 tendrían que cambiar a la vez.
 | `c4-task` | `Decrypt`, `GetPublicKey` | `Receive`, `Delete`, `ChangeMessageVisibility`, `SendMessage` a la DLQ |
 | `orq-task` | **ninguno** | **ninguno** |
 
-El orquestador no recibe política de identidad. Su execution role alcanza para
-hacer pull de ECR y escribir logs, y nada más — que es exactamente lo que debe
-poder hacer un arnés de prueba.
+El orquestador no recibe política de KMS ni de SQS. Su execution role alcanza
+para hacer pull de ECR y escribir logs, y nada más — que es exactamente lo que
+debe poder hacer un arnés de prueba.
+
+### Lo único que los tres comparten: `ecs-exec`
+
+Los tres task roles llevan `ssmmessages:*Channel`
+(`modules/security/exec.tf`). **Es la única puerta de entrada a la PoC**: sin
+IGW, NAT ni balanceador, el `POST /batch` del orquestador no es alcanzable desde
+fuera y no habría forma de lanzar una corrida. Cómo se usa está en
+[06 · Operación](06-operacion.md#cómo-se-lanza-una-corrida-ecs-exec).
+
+No abre ninguna ruta: es una sesión **saliente** hacia el endpoint
+`ssmmessages` de la propia VPC. No hay puerto que escuche y no hay regla de
+entrada en ningún security group — lo que autoriza es IAM, no la red.
+
+Y **no toca el invariante**: da una shell con el mismo task role que ya tenía el
+proceso. El de C4 sigue sin `kms:Sign`, y el `Deny` explícito de la key policy
+seguiría ganando aunque alguien aflojara la política de identidad.
 
 ## La resource policy de la cola: «se olvida siempre»
 

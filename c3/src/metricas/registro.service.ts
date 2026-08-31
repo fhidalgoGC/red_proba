@@ -323,7 +323,15 @@ export class RegistroService implements OnModuleInit, OnApplicationShutdown {
   // Archivo
   // -------------------------------------------------------------------------
 
-  private ruta(prueba: string): string {
+  /**
+   * `<prueba>__<tenant>.json`, para una prueba cualquiera y no solo la viva.
+   *
+   * Publica porque `GET /logs/:id` la necesita: el nombre lo decide quien
+   * escribe el archivo, asi que el que lo sirve pregunta en vez de volver a
+   * construirlo — dos sitios armando la misma ruta es un 404 esperando a que
+   * uno de los dos cambie el sufijo.
+   */
+  ruta(prueba: string): string {
     return join(this.dir, `${prueba}__${sanear(this.tenant)}.json`);
   }
 
@@ -571,4 +579,9 @@ function presentar(b: Bruto, aproximado = false): MetricasSalida {
   };
 }
 
-const sanear = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '-');
+/**
+ * Lo que puede ir en un nombre de archivo. Exportada porque `GET /logs/:id`
+ * arma el mismo sufijo para reconocerlo en el id: si cada uno lo saneara a su
+ * manera, el endpoint buscaria un archivo con un nombre que nadie escribio.
+ */
+export const sanear = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, '-');

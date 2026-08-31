@@ -44,6 +44,7 @@ CREATE TABLE inbox (
   duplicados      INT NOT NULL DEFAULT 0,
   bytes_sobre     INT,
   bytes_canonicos INT,
+  prueba          TEXT,          -- id de corrida, del MessageAttribute
 
   sqs_enviado     TIMESTAMPTZ,   -- SentTimestamp, aproximación de e6
   e7_recibido     TIMESTAMPTZ,
@@ -53,6 +54,13 @@ CREATE TABLE inbox (
   e10_persistido  TIMESTAMPTZ    -- DESPUÉS del COMMIT
 );
 ```
+
+`prueba` es **metadato de la corrida, no del evento**: por eso es columna y no va
+dentro del payload, que va firmado (regla 8). Llega en el `MessageAttribute`
+`prueba` del mensaje, que escribe el relay de C3 copiando el `x-prueba-id` del
+orquestador. Es lo que hace exacto el corte de `npm run informe -- --prueba <id>`
+— una ventana temporal (`--desde <ISO>`) no distingue dos corridas que se solapan
+en la cola ni sobrevive a que alguien se equivoque de hora.
 
 `payload_hash` como `PRIMARY KEY` no es una elección de modelado: **es la
 idempotencia entera**. La escritura es:

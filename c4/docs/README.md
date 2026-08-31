@@ -20,7 +20,7 @@ Termina cuando el evento queda guardado en el Postgres de C4 — ese COMMIT es
 | [01 · Cómo funciona](01-como-funciona.md) | El camino de un mensaje, paso a paso, y dónde puede salirse |
 | [02 · Criptografía](02-criptografia.md) | Qué descifra KMS y qué no, y por qué la firma se verifica en local |
 | [03 · La base](03-base.md) | El inbox, los cinco schemas, los descartes y las consultas que responden P4 |
-| [04 · Medición](04-medicion.md) | `e7..e10`, la marca `e7b` que hubo que añadir, y los números medidos |
+| [04 · Medición](04-medicion.md) | `e7..e10`, la marca `e7b` que hubo que añadir, el log por segundo (`G-11`) y los números medidos |
 | [05 · Configuración](05-configuracion.md) | Variables de entorno, y cuál de ellas es de seguridad y no de config |
 | [06 · Reglas que no se negocian](06-reglas.md) | Las decisiones que si se rompen invalidan la prueba |
 | [07 · Pruebas](07-pruebas.md) | Cómo se prueba contra KMS, cola y Postgres reales |
@@ -72,13 +72,24 @@ psql -d rpf_c4          -tAc "SELECT payload_hash FROM c4.inbox"                
 ```
 
 **Sigue sin ser un API.** La cola es su única entrada y el Postgres su única
-salida; lo único que sirve por HTTP es su propia salud (`G-09`):
+salida. Lo que sirve por HTTP es su salud (`G-09`) y **archivos** (`G-10`) —
+nunca una consulta al ledger:
 
 ```bash
-curl localhost:3003/health    # ok, base, cola, estado del consumidor
-curl localhost:3003/status    # solo contadores, no toca la base
-open  http://localhost:3003/docs   # Swagger
+curl localhost:3003/health              # ok, base, cola, estado del consumidor
+curl localhost:3003/status              # contadores del proceso + métricas por corrida
+curl -OJ localhost:3003/logs/<id>          # el log por segundo   (G-11)
+curl -OJ localhost:3003/logs/<id>__inbox   # el volcado del ledger (G-08)
+open  http://localhost:3003/docs        # Swagger
 ```
+
+Hay **dos archivos por corrida y no son lo mismo**: `<id>__c4.json` es el reloj
+del consumidor, escrito desde memoria mientras llega tráfico, y contesta
+P1/P2/P3; `<id>__inbox.json` es el volcado del ledger que deja
+`npm run informe -- --prueba <id>`, y contesta la mitad «llegó» de P4.
+
+`/logs/<id>` **no consulta la base** en ninguno de los dos casos: abre un archivo
+de disco y lo sirve como adjunto. El ledger sigue sin consultarse por HTTP.
 
 Ese endpoint existe porque **un proceso vivo no dice nada**: C4 puede estar
 corriendo con el Postgres caído y seguir sacando mensajes de la cola — los
@@ -106,7 +117,10 @@ antes de `G-09`.
 | `G-05` Detección de huecos | ✅ |
 | `G-06` Marcas de tiempo `e7..e10` | ✅ (+ `e7b`) |
 | `G-07` Manejo de DLQ | ✅ |
+| `G-08` Volcado del inbox para conciliar | ✅ (`npm run informe -- --prueba <id>`) |
 | `G-09` Endpoint de salud (`/health`, `/status`) | ✅ |
+| `G-10` Descarga de archivos (`GET /logs/<id>`) | ✅ (sirve archivos, no consulta la base) |
+| `G-11` Log por segundo, con `init`/`completed` por paso | ✅ (`c4/logs/<prueba>__c4.json`) |
 
 ---
 

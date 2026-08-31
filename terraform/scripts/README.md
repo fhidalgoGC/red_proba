@@ -30,10 +30,10 @@ Todos piden confirmación escribiendo `si`. Se salta con `--si` o `AUTO=1`.
 |---|---|---|---|
 | **Destruido** | — | — | $0 |
 | **Apagado** (`desired_count=0`) | 0 | 0 | **~$0,15/día** |
-| **Encendido** (`desired_count=1`) | tareas | 15 ENIs | ~$3,60/día + Fargate |
+| **Encendido** (`desired_count=1`) | tareas | 14 ENIs | ~$3,36/día + Fargate |
 
 Los interface endpoints siguen a la perilla de encendido a propósito. Si no
-lo hicieran, estar "apagado" costaría ~$3,60/día con `az_count=1` — casi
+lo hicieran, estar "apagado" costaría ~$3,36/día con `az_count=1` — casi
 50× el baseline de la cuenta, sin nada corriendo.
 
 **"Apagado" no es gratis, es barato.** Lo que sigue facturando con cero

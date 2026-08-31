@@ -6,7 +6,7 @@ npm run e2e             # punta a punta: KMS real, cola real, Postgres real
 npm run e2e -- --lento  # + reentrega real de SQS (~90 s)
 ```
 
-**26 tests** en verde, más el punta a punta.
+**41 tests** en verde, más el punta a punta.
 
 ---
 
@@ -143,5 +143,53 @@ verdad en vez de devolver un valor fijo. Contra un Postgres real ese caso no se
 puede provocar sin tirar el contenedor.
 
 También fija dos cosas que no son de configuración: que `puede_firmar` es
-siempre `false` (regla 7) y que cualquier ruta que no sea `/health` o `/status`
-es un 404 — C4 no es un API.
+siempre `false` (regla 7) y que en ese módulo cualquier otra ruta es un 404 — la
+frontera que cuida es que **el ledger no se consulte por HTTP**.
+
+## `GET /logs/:id` sirve un archivo, no la base
+
+`test/logs.test.ts` clava lo que ese endpoint no puede hacer. No monta base de
+mentira **porque el controlador no la pide**: si algún día se la pidiera, el test
+no compilaría, y esa es la barrera que interesa — `G-10` sirve el volcado que ya
+escribió el CLI de `G-08`, no una consulta a Postgres.
+
+Lo demás es el borde de un id que llega de fuera y se concatena a una ruta: que
+no pueda salirse de la carpeta (`../`, espacios, un `NUL`), que un **directorio**
+con nombre de log no se sirva como si fuera un JSON —`statSync` no falla ahí, así
+que sin `isFile()` saldría un `EISDIR` a medio download—, y que el 404 diga qué
+ids sí hay y que el volcado lo produce el CLI. Un 404 pelado se lee como «no
+llegó nada» cuando lo que falta es haber corrido el informe.
+
+Y **el orden de los candidatos, que es el contrato**: con los dos archivos
+presentes, `/logs/<id>` tiene que dar el log por segundo (`<id>__c4.json`) y no
+el volcado del ledger, porque `/logs/<id>` significa «el log» en los tres
+contenedores. `/logs/<id>__inbox` da el otro. Y si todavía no hay log por
+segundo, `/logs/<id>` sigue dando el volcado: quien ya tiene ese `curl` en un
+script no debería empezar a recibir 404.
+
+## `G-11` · las métricas por segundo
+
+`test/metricas.test.ts` — sin cola, sin KMS y sin Postgres: aquí solo hay
+aritmética y forma de archivo. Los tramos que necesitan una base (`inbox`,
+`stamp`) se ejercitan en `inbox.test.ts` y en el punta a punta.
+
+Lo que defiende, y por qué cada cosa:
+
+| | Si se rompiera |
+|---|---|
+| `received`, `init` y `completed` son **tres relojes distintos** | fue el fallo real: con `init` saliendo del reloj del lote, cada fila decía `50 / 50` un segundo tras otro y el informe parecía inventado |
+| `empieza()` mueve `messages.init` y `message.init` **a la vez** | podrían derivar y el archivo diría que empezaron 50 mensajes y que el tramo arrancó 41 veces, sin forma de saber cuál miente |
+| `crossed` cuenta las que cerraron aquí habiendo empezado antes | es lo único que distingue «los mismos 50» de «otros 50»; sin él hay que creerse el par `init`/`completed` |
+| `wait` y `receive` se declaran `observado` | son huecos ya ocurridos: sus columnas coinciden por definición, y sin la bandera se leen como un reloj plano y falso |
+| `min_ms` y `max_ms` son exactos y el techo **no** los toca | son la prueba, dentro de la fila, de que cada ejecución se midió sola: `min = max` con `n` grande es medir una vez y repetirla |
+| un veneno deja `message.init` sin su `completed` | un descarte sería indistinguible de un éxito, y se perdería en qué paso murió |
+| el id de corrida separa los archivos | C4 es **uno** para los 50 tenants: dos pruebas seguidas caerían en el mismo archivo y P2 de la segunda saldría inflada |
+| un id con forma rara acaba en `sin-id` | a diferencia de C3, aquí el id no llega en una cabecera propia: llega en un `MessageAttribute` **en claro** de una cola, y acaba en un nombre de archivo del operador neutro |
+| las reentregas se cuentan y **no** son un error | la entrega es al-menos-una-vez (regla 4); marcarlas como fallo haría que P4 pareciera rota justo cuando funciona |
+| un sondeo en vacío **no** mantiene viva una corrida | el lazo sondea para siempre: el informe nunca se cerraría, `duracion_s` crecería sin parar y habría una fila por cada 20 s de cola vacía. Medido antes de arreglarlo: una corrida de 10 s con **259 s** de duración |
+| el techo de muestras recorta los percentiles pero **no** `n`, `suma` ni `max` | en C4 no es hipotético —se alcanza pasando de 500 msg/s— y `envelope+decrypt+verify+hash+inbox` dejaría de dar `message` justo en las corridas grandes |
+
+El punta a punta lo comprueba **con la cola de verdad**: que el id de corrida
+viajó dentro del `MessageAttribute` (si no, el archivo que busca no existiría) y
+que la suma de los cinco tramos del mensaje cuadra con `message`. Medido sobre
+725 mensajes reales: **0,000 % de desvío**.

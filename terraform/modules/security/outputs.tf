@@ -15,3 +15,8 @@ output "kms_cola_arn" { value = aws_kms_key.cola.arn }
 output "sg_tenant_ids" { value = { for k, v in aws_security_group.tenant : k => v.id } }
 output "sg_c4_id" { value = aws_security_group.c4.id }
 output "sg_orq_id" { value = aws_security_group.orq.id }
+
+# Vacio cuando acceso_externo = false. Ver acceso-externo.tf.
+output "sg_bastion_ids" {
+  value = { for k, v in aws_security_group.bastion : k => v.id }
+}

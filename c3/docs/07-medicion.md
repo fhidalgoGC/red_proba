@@ -321,6 +321,23 @@ el log entero.
 `GET /status` da lo mismo **en vivo**, reconstruido desde memoria en cada
 llamada: el archivo puede ir hasta un minuto por detrás, `/status` no.
 
+### Bajárselo — `GET /logs/<prueba>`
+
+```bash
+curl -OJ localhost:3001/logs/xx01     # → xx01__tenant-01.json
+curl -OJ localhost:3002/logs/xx01     # → xx01__tenant-02.json
+```
+
+El archivo tal como está en disco, como adjunto, para no tener que entrar al
+contenedor: en AWS vive en el disco efímero de la task y la task muere en cuanto
+se apaga el despliegue (`T-07`) — con 50 tenants la alternativa son 50 sesiones
+de exec.
+
+El sufijo del tenant **lo pone el contenedor**, no la ruta: cada uno sirve su
+archivo y solo el suyo, así que un tenant no puede pedir la medición de otro. Los
+50 se juntan preguntándoles a los 50. Y como es el archivo y no la memoria, en
+mitad de una corrida puede ir por detrás — para el dato al instante, `/status`.
+
 > La columna `prueba` del outbox existe por esto. El relay corre en su propio
 > timer, fuera de cualquier request: sin ella no sabría a qué corrida pertenece
 > lo que publica, y `wait` y `sqs` caerían en `sin-id` mientras el resto del

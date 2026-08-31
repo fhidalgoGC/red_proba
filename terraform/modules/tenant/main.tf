@@ -74,8 +74,13 @@ resource "aws_db_instance" "esta" {
 
   db_subnet_group_name   = var.db_subnet_group
   vpc_security_group_ids = [var.sg_tenant_ids[each.key]]
-  publicly_accessible    = false
-  multi_az               = false # PoC: Single-AZ, la mitad de precio
+
+  # NUNCA publica, ni con acceso_externo. Con 50 tenants serian 50 endpoints
+  # de base de datos en internet y 50 IPv4 a $0,12/dia = $6/dia solo en IPs.
+  # El acceso desde fuera va por el bastion de la VPC (modules/bastion), que
+  # cuesta lo mismo con 1 tenant que con 200.
+  publicly_accessible = false
+  multi_az            = false # PoC: Single-AZ, la mitad de precio
 
   # ── Que el destroy sea limpio y rapido ──
   # Sin esto, destroy exige un snapshot final que tarda y deja un
@@ -108,6 +113,24 @@ resource "aws_ecs_task_definition" "api" {
   execution_role_arn       = var.rol_ejecucion_arn
   task_role_arn            = var.rol_task_arn
 
+  # ── Arquitectura, declarada ──────────────────────────────────────────────
+  #
+  # Sin este bloque Fargate asume X86_64, y una imagen construida en un Mac
+  # arm64 arranca y muere con «exec format error» — que en los logs de ECS
+  # aparece como una tarea que reinicia en bucle, no como un error de build.
+  #
+  # ARM64 y no X86_64 por dos razones: es nativo en las maquinas donde se
+  # construye (sin emulacion, sin `--platform`) y Fargate lo cobra ~20% mas
+  # barato. Nada de la PoC tiene modulos nativos — pg, el SDK de AWS y Nest son
+  # JavaScript puro—, asi que no hay nada que compilar por arquitectura.
+  #
+  # ⚠ Si algun dia esto se construye en un CI x86, hay que cambiar ESTE bloque
+  #   o construir con `docker buildx build --platform linux/arm64`.
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
   container_definitions = jsonencode([{
     name      = "api"
     image     = var.imagen_api
@@ -118,7 +141,12 @@ resource "aws_ecs_task_definition" "api" {
     # ── Contrato de arranque (CLAUDE.md) ──
     # Una sola imagen para los 50; todo lo que cambia son estas variables.
     environment = [
-      { name = "TENANT_ID", value = each.key },
+      # `tenant-01`, no `01`: es el mismo identificador que usa el
+      # orquestador en ORQ_TENANTS_JSON y el que nombra los logs de los dos
+      # lados. Con "01" a secas, `POST /batch {"client":"01"}` es ambiguo -el
+      # API acepta tambien el indice- y los informes de C3 y del arnes no se
+      # cruzan a simple vista.
+      { name = "TENANT_ID", value = "tenant-${each.key}" },
       # Endpoint de RDS. Cuando rds_activo=false la instancia no existe
       # todavia: la task definition igual se crea -es gratis- con un
       # marcador, y al encender toma el endpoint real.
@@ -178,14 +206,20 @@ resource "aws_ecs_service" "api" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.subnets_app
-    security_groups  = [var.sg_tenant_ids[each.key]]
+    subnets         = var.subnets_app
+    security_groups = [var.sg_tenant_ids[each.key]]
+
+    # Nunca publica. El :8080 se alcanza desde fuera por el bastion de la VPC,
+    # que llega a los 50 tenants sin una sola IP publica en las tasks.
     assign_public_ip = false
   }
 
   service_registries {
     registry_arn = aws_service_discovery_service.api[each.key].arn
   }
+
+  # La puerta de servicio. Ver modules/security/exec.tf.
+  enable_execute_command = true
 
   enable_ecs_managed_tags = true
   propagate_tags          = "SERVICE"

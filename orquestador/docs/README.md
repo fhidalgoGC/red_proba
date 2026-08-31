@@ -18,7 +18,7 @@ cite después como parte del diseño del producto.
 | | Qué responde |
 |---|---|
 | [01 · Cómo funciona](01-como-funciona.md) | Qué hace, en qué orden, y dónde se decide cada cosa |
-| [02 · La API](02-api.md) | `POST /batch`, `GET /batch/{id}`, el payload y los errores |
+| [02 · La API](02-api.md) | `POST /batch`, `GET /batch/{id}`, `GET /logs/{id}`, el payload y los errores |
 | [03 · El informe](03-informe.md) | La forma del log y cómo leerlo sin equivocarse |
 | [04 · Configuración](04-configuracion.md) | `perfil.yaml`, `tenants.yaml`, variables de entorno |
 | [05 · Reglas que no se negocian](05-reglas.md) | Las decisiones que si se rompen invalidan la prueba |

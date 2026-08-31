@@ -14,8 +14,23 @@ terraform.tfstate.*
 crash.log
 estado.auto.tfvars
 clientes.auto.tfvars
+acceso.auto.tfvars
+
+# Herramientas y estado locales del acceso por bastion.
+# ⚠ Sin comentarios al final de la linea: .gitignore no los reconoce y el
+#   patron pasaria a incluir el texto del comentario.
+#
+# .bin/     session-manager-plugin desempaquetado sin sudo
+# .tuneles/ pid y log de los tuneles en segundo plano
+.bin/
+.tuneles/
 
 # Secretos y entorno
+#
+# ACCESO.md lleva la contrasena de RDS en claro. Es un archivo de trabajo para
+# probar contra un despliegue vivo, no documentacion: se regenera con
+# `tofu output` y `aws secretsmanager get-secret-value`.
+ACCESO.md
 .env
 .env.*
 *.pem

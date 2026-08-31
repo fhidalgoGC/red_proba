@@ -14,6 +14,7 @@
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
 import {
   DeleteMessageBatchCommand,
@@ -28,6 +29,14 @@ import { BD, COLA, DLQ, LLAVE_CIFRADO, LLAVE_FIRMA, REGION } from './entorno';
 
 const ESQUEMA = 'c4_e2e';
 const LENTO = process.argv.includes('--lento');
+
+/**
+ * El id de corrida. Viaja en el `MessageAttribute` `prueba` igual que lo pone
+ * el relay de C3, y es lo que hace que C4 escriba `<PRUEBA>__c4.json` en vez
+ * de mezclarlo todo en `sin-id`. Fijo y no aleatorio: asi el archivo de la
+ * ultima corrida siempre esta en el mismo sitio para mirarlo a mano.
+ */
+const PRUEBA = 'e2e';
 
 const RPFS = 3;
 const POR_RPF = 4;
@@ -98,10 +107,13 @@ async function main(): Promise<void> {
   const venenos = await construirVenenos(productor, r, partyId);
 
   // ── 3. Publicar ──
-  const envio = await productor.publicar([
-    ...legitimos.map((p) => ({ sobre: p.sobre, rpfId: p.rpfId, payloadHash: p.payloadHash })),
-    ...venenos.map((v) => ({ sobre: v.sobre as Sobre, rpfId: v.rpfId, payloadHash: v.payloadHash })),
-  ]);
+  const envio = await productor.publicar(
+    [
+      ...legitimos.map((p) => ({ sobre: p.sobre, rpfId: p.rpfId, payloadHash: p.payloadHash })),
+      ...venenos.map((v) => ({ sobre: v.sobre as Sobre, rpfId: v.rpfId, payloadHash: v.payloadHash })),
+    ],
+    PRUEBA,
+  );
   console.log(
     `publicados ${envio.ok} mensajes (${LEGITIMOS} legitimos + ${venenos.length} venenos), ` +
       `${envio.fallidos} fallidos\n`,
@@ -122,8 +134,15 @@ async function main(): Promise<void> {
   const msConsumo = Date.now() - t1;
 
   const inbox = app.get((await import('../src/bd/inbox.repository')).InboxRepository);
-  const conc = await inbox.conciliacion();
+  // Filtrado por la corrida, que es como se corre de verdad: la base sobrevive
+  // a la prueba y sin corte el conteo arrastraria las anteriores.
+  const conc = await inbox.conciliacion(PRUEBA);
   const huecos = await inbox.huecos();
+
+  // G-11 · el informe por segundo, antes de cerrar la app. `app.close()` es lo
+  // que dispara el volcado final (el mismo camino que SIGTERM en Fargate).
+  const registro = app.get((await import('../src/metricas/registro.service')).RegistroService);
+  const logC4 = registro.ruta(PRUEBA);
   await app.close();
 
   // ── 5. Lo que tiene que ser cierto ──
@@ -137,10 +156,60 @@ async function main(): Promise<void> {
   };
 
   comprobar(conc.inbox === LEGITIMOS, `P4 · llegaron los ${LEGITIMOS} legitimos (inbox=${conc.inbox})`);
-  comprobar(conc.journal === LEGITIMOS, `el journal tiene ${LEGITIMOS} asientos (${conc.journal})`);
+  comprobar(
+    conc.journal_total === LEGITIMOS,
+    `el journal tiene ${LEGITIMOS} asientos (${conc.journal_total})`,
+  );
   comprobar(conc.sin_e10 === 0, `todos tienen e10 (sin_e10=${conc.sin_e10})`);
-  comprobar(conc.expedientes === RPFS, `${RPFS} expedientes en case_header (${conc.expedientes})`);
+  comprobar(
+    conc.expedientes_total === RPFS,
+    `${RPFS} expedientes en case_header (${conc.expedientes_total})`,
+  );
   comprobar(huecos.length === 0, `G-05 · sin huecos de sequence (${huecos.length})`);
+
+  // ── G-11 · el reloj de C4, por segundo ──
+  //
+  // Lo que se comprueba no es que el archivo exista: es que el id de corrida
+  // llego hasta aqui DENTRO del MessageAttribute y que los tramos cuadran. Si
+  // el atributo no viajara, todo esto habria caido en `sin-id` y el archivo
+  // que se busca no estaria.
+  let log: any = null;
+  try {
+    log = JSON.parse(readFileSync(logC4, 'utf8'));
+  } catch { /* el comprobar de abajo lo declara */ }
+  comprobar(log !== null, `G-11 · el log por segundo esta en ${logC4}`);
+  if (log) {
+    const m = log.total.messages;
+    comprobar(
+      m.persisted === LEGITIMOS,
+      `G-11 · el log cuenta los ${LEGITIMOS} persistidos (${m.persisted})`,
+    );
+    comprobar(
+      m.discarded === venenos.length,
+      `G-11 · y los ${venenos.length} descartados (${m.discarded})`,
+    );
+    // La aritmetica que hace util el desglose: los cinco tramos del mensaje
+    // suman el mensaje. Se compara con tolerancia porque entre `hash` y
+    // `inbox` hay unos microsegundos de armado de parametros que no pertenecen
+    // a ningun tramo.
+    const s = m.steps;
+    const piezas = ['envelope', 'decrypt', 'verify', 'hash', 'inbox']
+      .reduce((n, k) => n + (s[k]?.suma_ms ?? 0), 0);
+    const entero = s.message?.suma_ms ?? 0;
+    const desvio = entero === 0 ? 1 : Math.abs(entero - piezas) / entero;
+    comprobar(
+      desvio < 0.05,
+      `G-11 · envelope+decrypt+verify+hash+inbox = message ` +
+        `(${piezas.toFixed(1)} vs ${entero.toFixed(1)} ms, ${(desvio * 100).toFixed(2)}%)`,
+    );
+    // `wait` NO entra en esa suma: es lo que el mensaje espero su turno dentro
+    // del lote, no trabajo. Sumarlo contaria dos veces el procesamiento de los
+    // anteriores (04-medicion).
+    comprobar(
+      (s.wait?.init ?? 0) === LEGITIMOS + venenos.length,
+      `G-11 · wait se mide en los ${LEGITIMOS + venenos.length} mensajes, y va fuera de la suma`,
+    );
+  }
   comprobar(
     conc.descartes === venenos.length,
     `G-07 · ${venenos.length} descartes anotados (${conc.descartes})`,
@@ -247,7 +316,7 @@ async function construirVenenos(
   });
 
   // 2. Ciphertext manipulado: el tag de GCM no va a cuadrar.
-  const p2 = await productor.preparar(documento(r, randomUUID(), 1, 1600, partyId));
+  const p2 = await productor.preparar(documento(r, randomUUID(), 1, 2048, partyId));
   const ct = Buffer.from(p2.sobre.ct, 'base64');
   ct[10] = (ct[10] ?? 0) ^ 0xff;
   casos.push({
@@ -260,8 +329,8 @@ async function construirVenenos(
 
   // 3. ⚠ El caso grave: descifra pero la firma no verifica. Es alguien con la
   //    llave de cifrado intentando inyectar un documento que nunca se firmo.
-  const bueno = await productor.preparar(documento(r, randomUUID(), 1, 1700, partyId));
-  const falso = documento(r, bueno.rpfId, 1, 1700, partyId);
+  const bueno = await productor.preparar(documento(r, randomUUID(), 1, 2176, partyId));
+  const falso = documento(r, bueno.rpfId, 1, 2176, partyId);
   const sobreFalso = sellar(
     // La firma del documento legitimo, pegada a OTRO documento.
     { payload: falso, signature: (await productor.preparar(bueno.payload)).sobre.ct.slice(0, 88) },
@@ -279,7 +348,7 @@ async function construirVenenos(
 
   // 4. Firmado con otra llave: el key_id no esta en la lista blanca. La firma
   //    seria valida para ESA llave — por eso la lista blanca va primero.
-  const p4 = await productor.preparar(documento(r, randomUUID(), 1, 1800, partyId));
+  const p4 = await productor.preparar(documento(r, randomUUID(), 1, 2304, partyId));
   casos.push({
     nombre: 'key_id fuera de la lista blanca',
     motivoEsperado: 'llave_no_aceptada',
@@ -290,7 +359,7 @@ async function construirVenenos(
 
   // 5. El payload_hash declarado no es el del payload. Si C4 se lo creyera, la
   //    idempotencia quedaria en manos del emisor.
-  const p5 = await productor.preparar(documento(r, randomUUID(), 1, 1900, partyId));
+  const p5 = await productor.preparar(documento(r, randomUUID(), 1, 2432, partyId));
   casos.push({
     nombre: 'payload_hash declarado que no es el del payload',
     motivoEsperado: 'payload_hash_no_coincide',
@@ -301,7 +370,7 @@ async function construirVenenos(
 
   // 6. rpf_id que no es un UUID. Sin la guarda, Postgres rechaza la INSERT y
   //    el rechazo se leeria como fallo transitorio: reintento infinito.
-  const malRpf = documento(r, randomUUID(), 1, 2000, partyId);
+  const malRpf = documento(r, randomUUID(), 1, 2560, partyId);
   malRpf.rpf_id = 'no-soy-un-uuid';
   const p6 = await productor.preparar(malRpf);
   casos.push({

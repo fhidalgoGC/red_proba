@@ -5,12 +5,13 @@ import { BatchController } from './corrida/batch.controller';
 import { EmisorModule } from './emisor/emisor.module';
 import { GeneradorModule } from './generador/generador.module';
 import { MetricasModule } from './metricas/metricas.module';
+import { LogsController } from './metricas/logs.controller';
 import { StatusController } from './metricas/status.controller';
 import { PlanificadorModule } from './planificador/planificador.module';
 
 @Module({
   imports: [ConfigModule, CorridaModule, GeneradorModule, MetricasModule, EmisorModule, PlanificadorModule],
-  controllers: [StatusController, BatchController],
+  controllers: [StatusController, LogsController, BatchController],
 })
 export class AppModule implements OnApplicationBootstrap {
   private readonly logger = new Logger(AppModule.name);

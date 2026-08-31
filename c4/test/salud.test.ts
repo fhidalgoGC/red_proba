@@ -18,6 +18,7 @@ import { SaludService } from '../src/salud/salud.service';
 import type { ConfigService } from '../src/config/config.service';
 import type { BdService } from '../src/bd/bd.service';
 import type { ConsumidorService } from '../src/consumidor/consumidor.service';
+import type { RegistroService } from '../src/metricas/registro.service';
 
 const PUERTO = 39_003;
 
@@ -57,7 +58,17 @@ const consumidor = {
   }),
 } as unknown as ConsumidorService;
 
-const servicio = new SaludService(config, base as unknown as BdService, consumidor);
+// El registro se sustituye por su forma minima: este test defiende que `ok`
+// sigue a la BASE, y para eso no hace falta un reloj de verdad. Un
+// RegistroService real abriria un timer y crearia la carpeta de logs.
+const registro = { resumen: () => ({ logs: '/tmp', pruebas: [] }) } as unknown as RegistroService;
+
+const servicio = new SaludService(
+  config,
+  base as unknown as BdService,
+  consumidor,
+  registro,
+);
 
 @Module({
   controllers: [SaludController],
@@ -132,8 +143,12 @@ test('/status no toca la base', async () => {
 
 test('cualquier otra ruta es 404 · el ledger no se sirve por HTTP', async () => {
   // Los informes salen por CLI (G-08). Si algun dia aparece aqui un endpoint
-  // que devuelva expedientes, este test tiene que fallar y obligar a decidirlo
-  // a proposito.
+  // que CONSULTE el ledger, este test tiene que fallar y obligar a decidirlo a
+  // proposito.
+  //
+  // ⚠ `GET /logs/:id` no lo contradice: vive en LogsModule, abre el archivo
+  // que ya escribio el CLI y no toca Postgres. La frontera que este test cuida
+  // es la consulta, no el archivo.
   const { estado } = await pedir('/inbox');
   assert.equal(estado, 404);
 });

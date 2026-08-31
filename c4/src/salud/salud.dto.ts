@@ -70,7 +70,36 @@ export class SaludDto {
   @ApiProperty({ type: ConsumidorDto }) consumidor!: ConsumidorDto;
 }
 
+/**
+ * G-11 · lo que lleva medido cada corrida, reconstruido en cada llamada.
+ *
+ * ⚠ NO ES EL ARCHIVO. `<prueba>__c4.json` se reescribe cada pocos segundos y
+ * en una corrida larga puede ir hasta un minuto por detras. Esto es el
+ * acumulado AL INSTANTE, que es lo que se mira mientras la corrida pasa.
+ *
+ * Sin tipar campo a campo: las claves de `pasos` son los doce tramos y salen
+ * solo si el tramo se ejecuto en la ventana, asi que un DTO fijo prometeria
+ * campos que no siempre estan.
+ */
+export class MetricasStatusDto {
+  @ApiProperty({ description: 'Carpeta donde se escriben los `<prueba>__c4.json`.' })
+  logs!: string;
+
+  @ApiProperty({
+    isArray: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Una entrada por corrida vista. `prueba` es el id que llego en el ' +
+      '`MessageAttribute`; los mensajes sin atributo caen en `sin-id`. `pasos` lleva el ' +
+      'p50 de cada tramo, y `payload_hash_repetidos` las reentregas de la cola — que ' +
+      'son funcionamiento normal (regla 4), no un error.',
+  })
+  pruebas!: Array<Record<string, unknown>>;
+}
+
 export class StatusDto {
   @ApiProperty({ example: 'operador-neutro' }) rol!: string;
   @ApiProperty({ type: ConsumidorDto }) consumidor!: ConsumidorDto;
+  @ApiProperty({ type: MetricasStatusDto }) metricas!: MetricasStatusDto;
 }

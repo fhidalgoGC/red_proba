@@ -68,6 +68,7 @@ Swagger en `http://localhost:3001/docs`.
 | `C-07` | Cierre ordenado en SIGTERM | ✅ |
 | `C-08` | Health check real | ✅ |
 | `C-09` | Marcas `e0..e6` | ✅ |
+| `C-10` | Descarga del log (`GET /logs/<id>`) | ✅ |
 
-**129 tests.** Los del mapper corren sin nada; los del outbox y el relay
+**160 tests.** Los del mapper corren sin nada; los del outbox y el relay
 necesitan Postgres; `npm run e2e:kms` necesita además AWS.

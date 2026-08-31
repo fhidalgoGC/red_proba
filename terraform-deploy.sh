@@ -8,9 +8,32 @@
 #   sh terraform:deploy --estado        que hay desplegado y en que estado
 #   sh terraform:deploy --plan          enseña el plan y no aplica nada
 #
+#   sh terraform:deploy --acceso-externo       abre acceso directo desde tu IP
+#   sh terraform:deploy --sin-acceso-externo   lo cierra y no deja nada
+#
 #   --sin-encender   crea la infraestructura pero la deja parada
 #   --az 1|2         AZs por VPC (cada endpoint pone UNA ENI POR AZ)
 #   --si             sin confirmaciones
+#
+# ── El acceso externo ───────────────────────────────────────────────────────
+#
+# Por defecto NADA es alcanzable desde fuera de la VPC: no hay IGW, ni NAT, ni
+# balanceador, ni bastion. `--acceso-externo` crea UN BASTION POR VPC y desde
+# ahi se tunelan los endpoints y las bases con `sh tunel`.
+#
+# NO expone nada: el bastion no tiene reglas de entrada. Se entra por Session
+# Manager, que es una sesion SALIENTE del agente. Por eso tampoco hace falta
+# declarar tu IP.
+#
+# Cuesta ~$0,48/dia los dos, y es PLANO. La alternativa -IP publica en cada
+# task y cada RDS- serian $0,60/dia con 1 tenant pero $12,36/dia con 50, mas
+# 100 endpoints en internet.
+#
+# Son DOS porque la RDS de C4 esta en la VPC de C4 y no hay ruta desde C3. Eso
+# es el invariante, no un obstaculo.
+#
+# Es una perilla independiente: no se toca al cambiar el numero de clientes, y
+# si esta abierta el script lo recuerda en cada ejecucion.
 #
 # ── Que hace de verdad ──────────────────────────────────────────────────────
 #
@@ -45,7 +68,7 @@ SCRIPTS="$RAIZ/terraform/scripts"
 # Salen de terraform/COSTOS.md y de los comentarios de oneClient/terraform.tfvars.
 # Son el SUELO —endpoints y RDS—, sin Fargate ni las firmas de KMS, que es el
 # renglon dominante bajo carga. Para el numero real: scripts/costos.sh.
-USD_DIA_ENDPOINTS_POR_AZ=2.88   # 12 interface endpoints × 1 ENI por AZ
+USD_DIA_ENDPOINTS_POR_AZ=3.36   # 14 interface endpoints × 1 ENI por AZ
 USD_DIA_RDS_TENANT=0.45         # db.t4g.micro + 20 GB
 USD_DIA_RDS_C4=1.65             # db.t4g.medium + 20 GB
 
@@ -67,6 +90,7 @@ morir() { printf '\n%s✘ %s%s\n\n' "$A_ROJO" "$*" "$A_FIN"; exit 1; }
 DIR="$RAIZ/terraform/$ESCENARIO"
 CLIENTES_TFVARS="$DIR/clientes.auto.tfvars"
 PERILLA_TFVARS="$DIR/estado.auto.tfvars"
+ACCESO_TFVARS="$DIR/acceso.auto.tfvars"
 
 tf() { (cd "$DIR" && "$TF" "$@"); }
 
@@ -93,6 +117,8 @@ imagen_tag() {
 
 # ── ARGUMENTOS ──────────────────────────────────────────────────────────────
 ACCION=""; CLIENTES=""; AZ=""; SI=0; ENCENDER=auto
+# ACCESO: '' = no tocar lo que ya hay · si = abrir · no = cerrar
+ACCESO=""; ACCESO_CIDR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -108,14 +134,31 @@ while [ $# -gt 0 ]; do
     --encender)           ENCENDER=si; shift ;;
     --az)                 AZ=${2:-}; shift 2 ;;
     --si|-y)              SI=1; shift ;;
+    # Acceso directo desde internet. Sin CIDR se detecta tu IP publica.
+    --acceso-externo)     ACCESO=si
+                          case "${2:-}" in -*|'') ;; *) ACCESO_CIDR=$2; shift ;; esac
+                          shift ;;
+    --sin-acceso-externo) ACCESO=no; shift ;;
     --escenario)          ESCENARIO=${2:-}; DIR="$RAIZ/terraform/$ESCENARIO"
                           CLIENTES_TFVARS="$DIR/clientes.auto.tfvars"
-                          PERILLA_TFVARS="$DIR/estado.auto.tfvars"; shift 2 ;;
+                          PERILLA_TFVARS="$DIR/estado.auto.tfvars"
+                          ACCESO_TFVARS="$DIR/acceso.auto.tfvars"; shift 2 ;;
     -h|--help|'')         sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)                    morir "opcion desconocida: $1 · usa --clients N | --down | --estado" ;;
   esac
 done
 SOLO_PLAN=${SOLO_PLAN:-0}
+
+# `--acceso-externo` a secas es valido: no hace falta repetir cuantos clientes
+# hay para abrir o cerrar una puerta. Se toma el numero del despliegue actual.
+if [ -z "$ACCION" ] && [ -n "$ACCESO" ]; then
+  ACCION=desplegar
+  CLIENTES=$(clientes_actuales 2>/dev/null)
+  case "$CLIENTES" in
+    ''|*[!0-9]*) morir "no hay despliegue previo · usa --clients N --acceso-externo" ;;
+  esac
+fi
+
 [ -n "$ACCION" ] || morir "no dijiste que hacer · --clients N | --down | --estado"
 
 printf '\n%s┌─────────────────────────────────────────────┐%s\n' "$A_FUERTE" "$A_FIN"
@@ -259,6 +302,39 @@ az_count = $AZ
 EOF
 ok "clientes.auto.tfvars · $CLIENTES cliente(s), $AZ AZ"
 
+# ── Acceso externo ──────────────────────────────────────────────────────────
+# Solo se escribe si se pidio explicitamente. Sin flag, lo que ya hubiera se
+# queda como esta: abrir o cerrar una puerta a internet no puede ser un efecto
+# colateral de subir el numero de clientes.
+if [ "$ACCESO" = "si" ]; then
+  cat > "$ACCESO_TFVARS" <<EOF
+# GENERADO POR terraform:deploy — no editar a mano.
+# Escrito el $(date -u '+%Y-%m-%d %H:%M UTC') con --acceso-externo.
+#
+# ⚠ TEMPORAL. Mientras esto diga true hay un IGW por VPC y un t4g.nano por VPC
+#   gestionado por Session Manager. NO expone ningun puerto: el bastion no
+#   tiene reglas de entrada, y las tasks y las RDS siguen privadas.
+#
+#   Cerrar:  sh terraform:deploy --sin-acceso-externo
+acceso_externo = true
+EOF
+  aviso "ACCESO EXTERNO ABIERTO · 2 bastiones (uno por VPC) · ~\$0,48/día"
+  tenue "coste PLANO: el mismo con 1 tenant que con 200"
+  tenue "no expone ningún puerto — se entra por Session Manager, no por la red"
+  tenue "túneles:  sh tunel --lista"
+  tenue "cerrar:   sh terraform:deploy --sin-acceso-externo"
+elif [ "$ACCESO" = "no" ]; then
+  cat > "$ACCESO_TFVARS" <<EOF
+# GENERADO POR terraform:deploy — no editar a mano.
+# Cerrado el $(date -u '+%Y-%m-%d %H:%M UTC') con --sin-acceso-externo.
+acceso_externo = false
+EOF
+  ok "acceso externo CERRADO · los bastiones y los IGW se destruyen"
+elif [ -f "$ACCESO_TFVARS" ] && grep -qE '^\s*acceso_externo\s*=\s*true' "$ACCESO_TFVARS"; then
+  aviso "el acceso externo sigue ABIERTO · 2 bastiones facturando ~\$0,48/día"
+  tenue "cerrar:  sh terraform:deploy --sin-acceso-externo"
+fi
+
 # ── Solo el plan ────────────────────────────────────────────────────────────
 if [ "$SOLO_PLAN" = "1" ]; then
   paso "Plan"
@@ -315,7 +391,7 @@ fi
 
 if [ "$ARRANCAR" = "1" ]; then
   paso "Encendiendo"
-  tenue "recrea 12 interface endpoints (~\$$(awk -v a="$AZ" -v e="$USD_DIA_ENDPOINTS_POR_AZ" 'BEGIN{printf "%.2f", a*e}')/día con $AZ AZ). Tarda unos minutos."
+  tenue "recrea 14 interface endpoints (~\$$(awk -v a="$AZ" -v e="$USD_DIA_ENDPOINTS_POR_AZ" 'BEGIN{printf "%.2f", a*e}')/día con $AZ AZ). Tarda unos minutos."
   AUTO=1 sh "$SCRIPTS/encender.sh" "$ESCENARIO" || morir "el encendido falló"
 fi
 

@@ -118,7 +118,7 @@ credenciales, y para nada más: C4 **no puede abrir** lo que sale de ahí, porqu
 la `edk` no viene de `GenerateDataKey` y la llave no está en su lista blanca.
 
 ```bash
-npm test        # 155 tests; solo Postgres en 127.0.0.1:5433, sin AWS
+npm test        # 160 tests; solo Postgres en 127.0.0.1:5433, sin AWS
 ```
 
 ## Lo que registra
@@ -194,6 +194,9 @@ ponerlos uno al lado del otro:
   con SIGTERM. Temporal + `rename`: un fallo a media escritura no puede dejar un
   JSON truncado.
 - `GET /status` da lo mismo **en vivo**, sin abrir archivos.
+- `GET /logs/<id>` **baja el archivo** de esa prueba, para no tener que entrar al
+  contenedor. Cada tenant sirve el suyo y solo el suyo: el sufijo lo pone el
+  contenedor, así que no se puede pedir el de otro.
 
 Variables: `TENANT_ID` (por defecto `puerto-<PORT>`) y `C3_LOGS_DIR` (por
 defecto `c3/logs`). Detalle completo en
@@ -224,6 +227,7 @@ POST { documentos: [...] }        ← ya hechos, del orquestador
 | `C-07` | ✅ Cierre ordenado en SIGTERM | Deja de tomar trabajo; lo no publicado sigue PENDING. |
 | `C-08` | ✅ Health check real | `GET /health` consulta Postgres; `ok:false` si no contesta. |
 | `C-09` | ✅ Marcas `e0..e6` | Las siete en columnas del outbox, **nunca dentro del payload**. |
+| `C-10` | ✅ Descarga del log | `GET /logs/<id>` sirve `c3/logs/<id>__<tenant>.json` como adjunto. Cada tenant, el suyo: el sufijo lo pone el contenedor. |
 
 ## Variables de entorno — contrato de arranque
 

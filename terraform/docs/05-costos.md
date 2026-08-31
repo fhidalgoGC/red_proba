@@ -20,7 +20,7 @@ PoC con lo que ya vive ahí.
 |---|---|---|
 | **Destruido** | nada | $0 |
 | **Apagado** | 4 llaves KMS ($1/mes c/u) + 1 secreto ($0,40/mes) | **$0,15** |
-| **Encendido**, `az_count=1` | + 12 ENIs de endpoints + 2 RDS + Fargate | $2,88 + RDS + cómputo |
+| **Encendido**, `az_count=1` | + 14 ENIs de endpoints + 2 RDS + Fargate | $3,36 + RDS + cómputo |
 | **Encendido**, `az_count=2` | + 24 ENIs | $5,76 + RDS + cómputo |
 
 **«Apagado» no es gratis, es barato** — y es casi el doble del baseline, así que se
@@ -37,7 +37,7 @@ nota en el reporte diario. Si la PoC va a quedar quieta más de una semana, conv
 | `rds_persistente` | `false` → sigue a `desired_count` | que los datos sobrevivan al apagado |
 
 Los interface endpoints siguen a la perilla **a propósito**. Si no lo hicieran,
-estar «apagado» costaría ~$2,88/día con `az_count=1` — unas 35× el baseline, sin
+estar «apagado» costaría ~$3,36/día con `az_count=1` — unas 35× el baseline, sin
 nada corriendo. El precio a pagar: encender tarda unos minutos más mientras se
 recrean y el DNS privado propaga.
 

@@ -232,6 +232,7 @@ export class Productor {
    */
   async publicar(
     items: Array<{ sobre: Sobre; rpfId: string; payloadHash: string }>,
+    prueba?: string,
   ): Promise<{ ok: number; fallidos: number }> {
     let ok = 0;
     let fallidos = 0;
@@ -249,6 +250,12 @@ export class Productor {
             // esta desactivada en la cola porque el ciphertext cambia en cada
             // cifrado (regla 5, D-11).
             MessageDeduplicationId: it.payloadHash,
+            // El id de corrida, igual que lo pone el relay de C3. Sin el, todo
+            // lo que mida C4 en esta corrida cae en `sin-id` y el e2e no
+            // ejercitaria el camino que de verdad se usa.
+            ...(prueba
+              ? { MessageAttributes: { prueba: { DataType: 'String', StringValue: prueba } } }
+              : {}),
           })),
         }),
       );

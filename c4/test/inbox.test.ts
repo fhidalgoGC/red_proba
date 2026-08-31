@@ -42,6 +42,7 @@ function evento(sobre: Partial<EventoAPersistir> = {}): EventoAPersistir {
     partyId: 'hmac:' + '0'.repeat(64),
     keyId: 'arn:aws:kms:us-west-2:1:key/firma',
     sigAlg: 'Ed25519',
+    prueba: 'test',
     occurredAt: ahora.toISOString(),
     messageId: randomUUID(),
     recepciones: 1,
@@ -187,6 +188,7 @@ test('G-07 · un descarte queda anotado aunque no haya inbox', async () => {
     messageId: 'msg-1',
     motivo: 'firma_invalida',
     alarma: true,
+    prueba: 'test',
     detalle: 'la firma no verifica',
     bytesSobre: 100,
     recepciones: 1,
@@ -246,4 +248,39 @@ test('expedientes() acepta un corte temporal para no mezclar corridas', async ()
   // "desconocidos" por centenares.
   const futuro = new Date(Date.now() + 60_000).toISOString();
   assert.deepEqual(await inbox.expedientes(futuro), []);
+});
+
+test('expedientes() corta por id de corrida, que es el corte EXACTO', async () => {
+  // El corte temporal no distingue dos corridas que se solapan en la cola y no
+  // sobrevive a que alguien se equivoque de hora. El id si: viene del
+  // MessageAttribute que escribio el relay de C3 copiando el x-prueba-id del
+  // orquestador, y es el mismo que lleva el manifiesto contra el que se
+  // concilia.
+  const rpfA = randomUUID();
+  const rpfB = randomUUID();
+  await inbox.persistir(evento({ rpfId: rpfA, prueba: 'corrida-A' }));
+  await inbox.persistir(evento({ rpfId: rpfB, prueba: 'corrida-B' }));
+
+  const soloA = await inbox.expedientes(null, 'corrida-A');
+  assert.ok(soloA.some((e) => e.rpf_id === rpfA));
+  assert.ok(!soloA.some((e) => e.rpf_id === rpfB), 'la otra corrida no puede colarse');
+
+  // Y sin id, las dos: el filtro es opcional y no cambia el comportamiento de
+  // quien ya llamaba sin el.
+  const todas = await inbox.expedientes();
+  assert.ok(todas.some((e) => e.rpf_id === rpfA) && todas.some((e) => e.rpf_id === rpfB));
+});
+
+test('conciliacion() recorta lo que puede y MARCA lo que no', async () => {
+  const rpf = randomUUID();
+  await inbox.persistir(evento({ rpfId: rpf, prueba: 'corrida-C' }));
+
+  const c = await inbox.conciliacion('corrida-C');
+  assert.equal(c.inbox, 1, 'solo los de esta corrida');
+  // `journal` y `case_header` son el LIBRO, y el libro es acumulativo a
+  // proposito: no llevan la columna. Salen con sufijo `_total` para que nadie
+  // los lea como "lo de esta corrida" — un numero sin filtrar al lado de otros
+  // filtrados es la clase de trampa que se descubre en la demo.
+  assert.ok((c.journal_total ?? 0) >= 1);
+  assert.equal(c.expedientes, undefined, 'el nombre sin sufijo no debe existir');
 });

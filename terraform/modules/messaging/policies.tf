@@ -12,6 +12,8 @@ data "aws_iam_policy_document" "c3_sqs" {
 }
 
 resource "aws_iam_role_policy" "c3_sqs" {
+  count = var.permisos_de_task ? 1 : 0
+
   name   = "c3-sqs"
   role   = var.rol_c3_id
   policy = data.aws_iam_policy_document.c3_sqs.json
@@ -36,6 +38,8 @@ data "aws_iam_policy_document" "c4_sqs" {
 }
 
 resource "aws_iam_role_policy" "c4_sqs" {
+  count = var.permisos_de_task ? 1 : 0
+
   name   = "c4-sqs"
   role   = var.rol_c4_id
   policy = data.aws_iam_policy_document.c4_sqs.json

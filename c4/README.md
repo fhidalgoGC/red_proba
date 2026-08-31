@@ -28,12 +28,43 @@ Diseño del track: [../docs/05-contenedor-c4.md](../docs/05-contenedor-c4.md)
 | `G-07` Manejo de DLQ | ✅ |
 | `G-08` Volcado del inbox para conciliar | ✅ (`npm run informe`) |
 | `G-09` Endpoint de salud (`/health`, `/status`) | ✅ |
+| `G-10` Descarga de archivos (`GET /logs/<id>`) | ✅ (sirve archivos, no consulta la base) |
+| `G-11` Log por segundo, con `init`/`completed` por paso | ✅ (`c4/logs/<prueba>__c4.json`) |
 
-**El informe se saca por CLI**, no por HTTP:
+## Dos archivos por corrida, y no son lo mismo
+
+| Archivo | Quién lo escribe | Qué contesta |
+|---|---|---|
+| `<prueba>__c4.json` | el **consumidor**, desde memoria, cada pocos segundos (`G-11`) | P1/P2/P3 desde el lado de C4: latencia, ritmo y **dónde se satura** |
+| `<prueba>__inbox.json` | el **CLI** `npm run informe`, leyendo Postgres (`G-08`) | la mitad «llegó» de P4 |
 
 ```bash
-npm run informe -- --nombre <prueba> --desde <ISO>   # → c4/logs/<prueba>__inbox.json
+curl -OJ localhost:3003/logs/<prueba>           # el log por segundo   (G-11)
+curl -OJ localhost:3003/logs/<prueba>__inbox    # el volcado del ledger (G-08)
+curl -s   localhost:3003/status                 # el acumulado al instante
 ```
+
+El primero se pierde si muere la task —por eso se vuelca cada pocos segundos—; el
+segundo se puede regenerar siempre porque los datos están en Postgres.
+Confundirlos lleva a creer que P4 está contestada cuando lo único que hay es un
+log de tiempos.
+
+**El volcado del ledger se saca por CLI**, no por HTTP:
+
+```bash
+npm run informe -- --prueba <id>          # → c4/logs/<id>__inbox.json
+```
+
+`--prueba` filtra por la columna `inbox.prueba`: el id de corrida que generó el
+orquestador y que llegó hasta aquí en el `MessageAttribute` `prueba` del mensaje.
+Es el corte **exacto** — distingue dos corridas que se solapan y no depende de
+acertar una hora, que es todo lo que daba `--desde <ISO>`. Sin ninguno de los
+dos, el volcado es la base entera y el CLI lo avisa.
+
+El endpoint **no consulta la base**: sirve archivos que ya están en disco. Existe
+porque en AWS viven en el disco efímero de la task y la task muere en cuanto se
+apaga el despliegue (`T-07`): sin él hay que abrir un exec a Fargate para leer un
+JSON.
 
 Ese archivo es la mitad «llegó» de P4; la otra la escribe el orquestador y las
 cruza `npm run conciliar` (ver `orquestador/README.md`). `G-05` por sí solo ve
@@ -42,13 +73,25 @@ entero son invisibles desde aquí, porque el rango con el que compara sale de lo
 propios datos que llegaron.
 
 **Sigue sin ser un API.** La cola es su única entrada y el Postgres su única
-salida; lo único que sirve por HTTP es su propia salud (`G-09`):
+salida. Lo que sirve por HTTP es su salud (`G-09`) y el archivo del volcado —
+nunca una consulta al ledger:
 
 ```bash
 curl localhost:3003/health    # ok, base, cola, estado del consumidor
-curl localhost:3003/status    # solo contadores, no toca la base
+curl localhost:3003/status    # contadores del proceso + métricas por corrida
+curl -OJ localhost:3003/logs/<prueba>   # los archivos, tal cual están en disco
 open  http://localhost:3003/docs   # Swagger
 ```
+
+`/status` lleva **dos niveles y hacen falta los dos**: `consumidor.contadores` es
+del PROCESO y se resetea al reiniciar; `metricas.pruebas[]` es por CORRIDA, que
+es la unidad en la que se leen los resultados. Con solo el primero, dos pruebas
+seguidas en el mismo contenedor salen sumadas.
+
+⚠ `/logs/<id>` **sí devuelve `rpf_id`**: es lo que lleva dentro el volcado de
+`G-08`. Lo que no hay es una consulta: el endpoint abre un archivo, no la base, y
+ese archivo solo existe si alguien corrió el CLI. Escucha en `127.0.0.1` como el
+health, así que no queda publicado a la VPC del operador.
 
 Ese endpoint existe porque **un proceso vivo no dice nada**: C4 puede estar
 corriendo con el Postgres caído y seguir sacando mensajes de la cola — los

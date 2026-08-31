@@ -115,22 +115,69 @@ vivo solo dice que el proceso existe, un puerto abierto que alguien hizo
 aplicación pueda entrar con sus credenciales. El del orquestador es el único que
 no mira una base, porque no tiene: su `ok` es el pool de plantillas.
 
+**Y los tres que escriben logs los sirven: `GET /logs/<id>`** baja el JSON de esa
+prueba como adjunto, sin entrar al contenedor — en AWS vive en el disco efímero
+de la task y la task muere en cuanto se apaga el despliegue (T-07):
+
+```bash
+curl -OJ localhost:3000/logs/xx01               # orquestador/logs/xx01.json
+curl -OJ localhost:3000/logs/xx01__manifiesto   # el manifiesto de O-08
+curl -OJ localhost:3001/logs/xx01               # c3/logs/xx01__tenant-01.json
+curl -OJ localhost:3003/logs/xx01               # c4/logs/xx01__c4.json
+curl -OJ localhost:3003/logs/xx01__inbox        # el volcado del ledger (G-08)
+```
+
+Dos cosas que no hace: **no lee de memoria** —es el archivo, con el retraso de su
+volcado; el dato al instante está en `/status`— y **no consulta la base**.
+
+C4 tiene **dos archivos por corrida y no son lo mismo**: `xx01__c4.json` es su
+log por segundo (G-11), escrito desde memoria mientras llega tráfico;
+`xx01__inbox.json` es el volcado del **ledger** que deja `npm run informe --
+--prueba xx01` (G-08), y sin ese CLI no existe aunque el ledger tenga los datos.
+El primero contesta P1/P2/P3 desde el lado de C4; el segundo, la mitad «llegó»
+de P4. Cada C3 sirve solo su propio archivo: el sufijo del tenant lo pone el
+contenedor, no la ruta.
+
 ### Desplegar en AWS
 
 ```bash
+sh imagenes                       # construye las tres y las empuja a ECR
 sh terraform:deploy --clients 1   # la prueba inicial · 1 tenant (máximo 200)
 sh terraform:deploy --down        # apagar: cómputo y endpoints a cero
 sh terraform:deploy --estado      # qué hay desplegado
 ```
 
+**Las imágenes van primero.** `terraform:deploy` no enciende si los repos de
+ECR están vacíos, y hace bien: unas tareas con imagen inexistente no fallan el
+despliegue, se quedan reintentando con `CannotPullContainerError` y eso se lee
+como «el servicio tarda en arrancar». Las tres task definitions declaran
+**ARM64** y `sh imagenes` construye `linux/arm64`; si cambia uno de los dos
+lados hay que cambiar el otro, o la tarea muere con «exec format error».
+
+**La corrida se lanza por ECS Exec.** No hay IGW, ni NAT, ni balanceador, ni
+bastión — así que el `POST /batch` del orquestador no es alcanzable desde fuera
+de la VPC. Exec no abre ninguna ruta: es una sesión saliente hacia el endpoint
+`ssmmessages` de la propia VPC, autorizada por IAM y no por la red. Necesita el
+`session-manager-plugin` en el cliente. Detalle en
+[terraform/docs/06-operacion.md](terraform/docs/06-operacion.md#cómo-se-lanza-una-corrida-ecs-exec).
+
 Entre corridas se **apaga**, no se destruye (T-07): deja de facturar cómputo en
 segundos y conserva red, llaves, colas y datos. Para coste cero absoluto,
 `terraform/scripts/destruir.sh oneClient`.
 
-⚠ `reset-scratch` **no toca la cola SQS**: está en AWS y es compartida. Si
-quedaron mensajes de la corrida anterior, C4 los insertará al arrancar y la
-siguiente medición saldrá inflada. El script imprime el `purge-queue` para que
-lo decidas tú.
+⚠ **Local y despliegue tienen COLAS DISTINTAS, y no es comodidad.** El
+pipeline local publica a una SQS de verdad — es lo que hace que la prueba local
+valga algo. Con una sola cola, tu C4 y el C4 de Fargate son dos consumidores
+competidores de la misma FIFO: SQS reparte y cada uno se lleva la mitad. No
+falla nada; simplemente el inbox de AWS acusa la mitad de los eventos y P4 da un
+falso negativo que parece un problema de red. Medido: 105 publicados, 56 en AWS,
+49 en el `rpf_c4` local. Las dos las crea Terraform —`cola_url` y
+`cola_local_url`— y la local es la que va en `c3/.env` y `c4/.env`.
+
+⚠ `reset-scratch` **no toca la cola SQS**: está en AWS y purgarla es tu
+decisión. Si quedaron mensajes de la corrida anterior, C4 los insertará al
+arrancar y la siguiente medición saldrá inflada. El script imprime el
+`purge-queue` de la cola local para que lo decidas tú.
 
 ## Contrato de arranque
 
@@ -142,16 +189,28 @@ que los tracks avancen en paralelo:
 ```
 TENANT_ID              # identificador del tenant
 DB_HOST                # endpoint de su instancia RDS
-DB_SECRET_ARN          # credenciales en Secrets Manager
+DB_PORT=5432
+DB_NAME=poc
+DB_USER=app
+DB_PASSWORD            # lo inyecta ECS desde Secrets Manager
 KMS_SIGN_KEY_ID        # llave Ed25519 en C3
 KMS_HMAC_KEY_ID        # pseudonimización de tenant
 KMS_ENCRYPT_KEY_ID     # llave simétrica de C4 (solo GenerateDataKey)
 SQS_QUEUE_URL          # cola FIFO en C4
+PORT=8080
 OUTBOX_POLL_MS=500
 OUTBOX_BATCH_SIZE=10
 OUTBOX_MAX_ATTEMPTS=10
 OUTBOX_BACKOFF_CAP_SEC=300
 ```
+
+⚠ **La base llega en piezas, no como `DATABASE_URL`, y no es una preferencia.**
+La contraseña la inyecta ECS desde Secrets Manager en su propia variable, y una
+task definition no sabe interpolar un secreto dentro de otra variable. En local
+sigue llegando entera en `DATABASE_URL`, que gana si está puesta; en Fargate la
+arma `urlDeBase()` con `sslmode=no-verify` — RDS PostgreSQL 15+ rechaza la
+conexión en claro, pero su CA no está en el trust store de Node y `require`
+fallaría al verificarla. Lo mismo en C4.
 
 **2. Formato del sobre** — lo que viaja en el cuerpo del mensaje SQS. Está en
 [docs/02-payload.md](docs/02-payload.md#el-sobre). C3 y C4 dependen de él.
@@ -159,9 +218,20 @@ OUTBOX_BACKOFF_CAP_SEC=300
 **3. Atributos del mensaje SQS**, en claro:
 
 ```
-MessageGroupId          = rpf_id
-MessageDeduplicationId  = payload_hash   (sha256 del canónico EN CLARO)
+MessageGroupId            = rpf_id
+MessageDeduplicationId    = payload_hash   (sha256 del canónico EN CLARO)
+MessageAttributes.prueba  = x-prueba-id    (el id de corrida; opcional)
 ```
+
+Los dos primeros son de sistema y el cuerpo está cifrado, así que si viajaran
+dentro la cola no tendría de dónde sacar ni el orden ni la deduplicación.
+
+El tercero es **el id de corrida cruzando el único canal que hay entre los dos
+dominios**: lo genera el orquestador, viaja en la cabecera `x-prueba-id` hasta
+C3, C3 lo guarda en `outbox.prueba` y el relay lo copia aquí. Sin él, todo lo que
+mide C4 cae en un único montón: dos corridas seguidas quedan sumadas en el mismo
+archivo y P2 de la segunda sale inflada. Va **fuera del payload** porque el
+payload va firmado (regla 8), y **no toca el dedup**, que es explícito.
 
 ## Reglas que no se negocian
 

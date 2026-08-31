@@ -103,6 +103,23 @@ eso es peor que no arrancar.
 | `ORQ_PORT` | 3000 | Puerto. **No es `PORT`**: C3 usa esa para levantar N instancias, y una variable compartida haría que exportarla moviera los dos |
 | `ORQ_CONFIG_DIR` | `./config` | De dónde leer los YAML |
 | `ORQ_LOGS_DIR` | `../logs` | Dónde escribir los informes |
+| `ORQ_TENANTS_JSON` | — | La lista de destinos, con **la misma forma que `tenants.yaml`**. Reemplaza al archivo |
+| `ORQ_PERFIL_JSON` | — | El perfil, con la misma forma que `perfil.yaml`. Reemplaza al archivo |
+
+Las dos son **independientes**: se puede inyectar la lista de destinos y dejar
+que el perfil siga viniendo del YAML. Es exactamente lo que hace Terraform —los
+hosts de Cloud Map no se pueden hornear en la imagen, y el perfil sí debe
+poderse cambiar sin un `apply`— y lo que pasa en la task definition de
+`modules/orq`.
+
+Lo inyectado pasa por **los mismos validadores** que el archivo. Un camino de
+código distinto para la configuración de la corrida de verdad sería un camino
+sin probar.
+
+> ⚠ Antes las dos colgaban de `ORQ_PERFIL_JSON`: sin él, `ORQ_TENANTS_JSON` se
+> **ignoraba en silencio** y el orquestador le pegaba a los `localhost:3001` del
+> ejemplo de desarrollo. En la VPC eso es un `ECONNREFUSED` por evento y una
+> corrida entera de ceros.
 
 En C3:
 

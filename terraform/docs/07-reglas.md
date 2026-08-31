@@ -47,7 +47,7 @@ cuesta media tarde diagnosticar.
 ### 5 · Los interface endpoints sí siguen la perilla
 
 Cobran ~$0,01/h **por ENI y por AZ**. Si no siguieran a `desired_count`, estar
-«apagado» costaría ~$2,88/día con una AZ, unas 35× el baseline de la cuenta, sin
+«apagado» costaría ~$3,36/día con una AZ, unas 35× el baseline de la cuenta, sin
 nada corriendo.
 
 ---

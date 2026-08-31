@@ -94,6 +94,8 @@ data "aws_iam_policy_document" "cola" {
 }
 
 resource "aws_sqs_queue_policy" "eventos" {
+  count = var.permisos_de_task ? 1 : 0
+
   queue_url = aws_sqs_queue.eventos.id
   policy    = data.aws_iam_policy_document.cola.json
 }

@@ -11,7 +11,22 @@ health check queda en verde y nadie se entera de que P4 no se está midiendo.
 | Variable | Qué pasa si falta |
 |---|---|
 | `SQS_QUEUE_URL` | El proceso muere: no tiene de dónde leer |
-| `DATABASE_URL` | El proceso muere: sin base no hay `e10`, y `e10` es el final de la medición. **Base PROPIA de C4** — nunca la de un tenant de C3 |
+| `DATABASE_URL` — o las piezas `DB_*` | El proceso muere: sin base no hay `e10`, y `e10` es el final de la medición. **Base PROPIA de C4** — nunca la de un tenant de C3 |
+
+### La base: entera, o en piezas
+
+Igual que C3, y por la misma razón. En local la URL llega entera en
+`DATABASE_URL`; **en Fargate no puede llegar entera**, porque la contraseña la
+inyecta ECS desde Secrets Manager en su propia variable y una task definition no
+sabe interpolar un secreto dentro de otra. Allí llegan `DB_HOST`, `DB_PORT`
+(`5432`), `DB_NAME` (`poc`), `DB_USER`, `DB_PASSWORD` y `DB_SSLMODE`
+(`no-verify`), y `urlDeBase()` —al pie de `src/config/config.service.ts`— arma
+la URL. `DATABASE_URL` gana si está puesta.
+
+`no-verify` y no `require`: RDS PostgreSQL 15+ rechaza la conexión en claro
+(`rds.force_ssl=1`), pero su CA no está en el trust store de Node y `require`
+fallaría al verificarla. Contra el Postgres local, que no habla TLS, va
+`DB_SSLMODE=disable`.
 
 ## De seguridad
 
@@ -29,6 +44,7 @@ health check queda en verde y nadie se entera de que P4 no se está midiendo.
 | `C4_ESQUEMA` | `c4` | Esquema de Postgres |
 | `C4_BD_POOL` | `10` | Conexiones del pool |
 | `C4_PORT` | `3003` | Puerto del `/health` (`G-09`). **`0` lo apaga** y C4 vuelve a ser worker puro, sin ningún puerto abierto |
+| `C4_LOGS_DIR` | `c4/logs` | Carpeta de los **dos** archivos por corrida: el log por segundo que escribe el consumidor (`<id>__c4.json`, `G-11`) y el volcado del ledger que escribe el CLI (`<id>__inbox.json`, `G-08`). Una sola variable para los tres que la tocan —consumidor, CLI y `GET /logs/<id>`—: si divergieran, uno escribiría donde el otro no mira y el 404 no diría por qué |
 | `C4_HEALTH_HOST` | `127.0.0.1` | Dónde escucha el health. Solo localhost: en AWS lo consulta el `healthCheck` de la propia task, desde dentro del contenedor. Ponerlo en `0.0.0.0` lo expone a la VPC |
 | `SQS_BATCH_SIZE` | `10` | Mensajes por `ReceiveMessage`. **Tope duro: 10** |
 | `SQS_WAIT_SECONDS` | `20` | Long polling. **Tope duro: 20** |
@@ -51,6 +67,33 @@ health check queda en verde y nadie se entera de que P4 no se está midiendo.
 `C4_SALIR_TRAS_VACIOS` existe para drenar una corrida y salir. Sin él habría
 que matar el proceso, y matarlo es justo lo que deja mensajes procesados y sin
 borrar.
+
+---
+
+## Lo que llega en el mensaje, y no se configura aquí
+
+Tres datos viajan **en claro y fuera del sobre**, porque el cuerpo está cifrado y
+SQS no puede leer nada de él. Los escribe el relay de C3:
+
+| | Qué es |
+|---|---|
+| `MessageGroupId` | `rpf_id` — el orden FIFO del expediente |
+| `MessageDeduplicationId` | `payload_hash` — la idempotencia (regla 5) |
+| `MessageAttributes.prueba` | **el id de corrida** — el `x-prueba-id` que generó el orquestador |
+
+El tercero es lo que permite a C4 separar sus métricas por prueba: sin él, todo
+lo que mide cae en un único montón, dos corridas seguidas quedan sumadas en el
+mismo archivo y P2 de la segunda sale inflada. Va **fuera del payload** a
+propósito: el payload va firmado y meterle el id de la corrida cambiaría lo que
+se firma (regla 8).
+
+Un mensaje **sin** ese atributo —un productor viejo, o un veneno inyectado— cae
+en la corrida `sin-id`. No se descarta: perderlo del log sería perder justamente
+el caso raro. Y el valor se sanea antes de tocar nada, porque llega de una cola
+y acaba en un nombre de archivo del contenedor del operador neutro.
+
+Ese mismo id se guarda en la columna `inbox.prueba`, que es lo que hace exacto el
+`--prueba` de `npm run informe`.
 
 ---
 

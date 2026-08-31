@@ -210,9 +210,20 @@ El plaintext que se cifra es:
 Atributos del mensaje SQS, **en claro**:
 
 ```
-MessageGroupId          = rpf_id
-MessageDeduplicationId  = payload_hash   // sha256 del canónico EN CLARO (paso ②)
+MessageGroupId            = rpf_id
+MessageDeduplicationId    = payload_hash   // sha256 del canónico EN CLARO (paso ②)
+MessageAttributes.prueba  = x-prueba-id    // el id de corrida (opcional)
 ```
+
+Los dos primeros son de sistema: el cuerpo está cifrado, así que si viajaran
+dentro la cola no tendría de dónde sacar ni el orden ni la deduplicación.
+
+El tercero es el **id de corrida** cruzando el único canal que hay entre los dos
+dominios — lo genera el orquestador y lo copia el relay de C3 desde
+`outbox.prueba`. Sirve para que C4 separe sus métricas por prueba: sin él, dos
+corridas seguidas caen en el mismo archivo. Va **fuera del payload** porque el
+payload va firmado (regla 8) y porque el id de una prueba no pertenece a un
+asiento fiscal.
 
 ### Tamaño en la cola
 

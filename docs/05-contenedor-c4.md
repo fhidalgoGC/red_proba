@@ -133,9 +133,13 @@ Ninguna otra señal sirve para esto:
 | `GET /health` | Proceso vivo **y** base alcanzable desde la aplicación, con sus credenciales |
 
 **Sin volverlo un API.** Nest con Swagger en `/docs`, igual que C3 y el
-orquestador —los tres se preguntan y se leen del mismo modo—, pero lo único
-publicado son `/health` y `/status`: ni un `rpf_id`, ni un `payload_hash`, ni un
-importe. El ledger sigue saliendo por CLI (`G-08`).
+orquestador —los tres se preguntan y se leen del mismo modo—, y lo publicado son
+`/health`, `/status` y `GET /logs/<id>`. **El ledger no se consulta por HTTP:**
+`/logs/<id>` sirve **archivos ya escritos en disco**, no una consulta a
+Postgres. El volcado del ledger lo escribe el CLI de `G-08` y si nadie lo corrió
+contesta 404; lleva `rpf_id` dentro —es la mitad «llegó» de P4— pero ni
+`payload_hash`, ni el documento en claro, ni un importe: el que decide qué se
+expone sigue siendo el CLI, no el endpoint.
 
 Escucha en `127.0.0.1`, así que la task definition sigue **sin `portMappings` y
 sin balanceador**: quien lo consulta es el `healthCheck` de la propia task,
@@ -144,5 +148,63 @@ abre nada — como corría antes de `G-09`.
 
 ⚠ El `healthCheck` de ECS comprueba **`ok:true` en el cuerpo**, no el código
 HTTP: el endpoint contesta 200 también con la base caída, con `ok:false` dentro.
+
+### G-11 · Log por segundo, con `init`/`completed` por paso
+
+C4 lleva su propio reloj en memoria y lo vuelca a `c4/logs/<prueba>__c4.json`,
+con la misma forma que el log de C3 (`C-09`) y el del orquestador: total,
+`seconds[]`, y `minutes[]` cuando la corrida pasa de un minuto.
+
+**Por qué no bastan las marcas `e7..e10`.** Son ISO 8601, con resolución de
+milisegundo. Verificar Ed25519 sobre 3 KB es sub-milisegundo y el AES-GCM del
+sobre también: los dos tramos saldrían en `0 ms` y el informe diría que descifrar
+y verificar son gratis. Las muestras se toman con `hrtime.bigint()` —monótono y
+con resolución de nanosegundo—. Las marcas siguen siendo las que van a las
+columnas y las que permiten conciliar contra el outbox de C3; esto es lo otro:
+**duración, no instante**.
+
+**Y por qué hace más falta aquí que en C3.** C4 es el **embudo**: los 50 tenants
+publican a una cola y este proceso la consume solo, en serie dentro de cada lote.
+Si algo se satura primero —P3— se satura aquí, y un promedio por minuto lo
+escondería.
+
+**Doce tramos**, cada uno con su par `init`/`completed`:
+
+| | Por mensaje | Por lote | Por ciclo |
+|---|---|---|---|
+| | `wait` `envelope` `decrypt` `verify` `hash` `inbox` `message` | `stamp` `delete` `batch` | `receive` |
+
+(más `dlq`, que solo se ejecuta en el camino del veneno y se cronometra aparte:
+metido en `message` inflaría la latencia media con dos viajes de red que a un
+mensaje sano no le pasan).
+
+`init` cae en el segundo en que el tramo **empezó** y `completed` en el que
+**terminó**. Que no coincidan es lo normal y es el dato: `init − completed` son
+las ejecuciones que entraron y no salieron, y dicen **en qué paso** se quedó un
+mensaje que nunca llegó a `e10`. Un veneno de firma inválida deja `verify.init`
+sin su `completed` e `inbox.init` sin tocar.
+
+La aritmética cuadra en el total, no en una fila suelta:
+
+```
+envelope + decrypt + verify + hash + inbox  =  message
+Σ message + stamp + delete                  =  batch
+```
+
+`wait` queda fuera de esa suma a propósito —es espera, no trabajo (`e7→e7b`)— y
+sumarlo contaría dos veces el procesamiento de los mensajes anteriores del lote.
+Medido sobre 725 mensajes reales, el desvío en el total es **0,000 %**.
+
+**El id de corrida cruza el único canal que hay.** El archivo se llama
+`<prueba>__c4.json` y esa `<prueba>` sale del `MessageAttribute` `prueba` del
+mensaje SQS, que escribe el relay de C3 copiando el `x-prueba-id` del
+orquestador. Va **fuera del payload** porque el payload va firmado (regla 8) y
+porque el id de una prueba no pertenece a un asiento fiscal que guarda el
+operador neutro. Sin él, dos corridas seguidas caerían en el mismo archivo y P2
+de la segunda saldría inflada. El mismo id se guarda en `inbox.prueba`, y es lo
+que hace exacto el `--prueba` de `G-08`.
+
+Detalle y una corrida completa medida:
+[c4/docs/04-medicion.md](../c4/docs/04-medicion.md#g-11--el-log-por-segundo).
 Mirar solo el código dejaría la task en verde justo en el caso que este health
 existe para detectar.

@@ -23,27 +23,35 @@ export class ConfigService implements OnModuleInit {
   private _perfil!: Perfil;
 
   onModuleInit(): void {
-    // El CLI de `burst` inyecta perfil y destinos por entorno en vez de por
-    // archivo. Pasan por LOS MISMOS validadores que el YAML: una corrida de
-    // prueba tiene que ejercitar el mismo camino de codigo que la de verdad,
-    // o no esta probando lo que crees.
-    const inyectado = process.env.ORQ_PERFIL_JSON;
-    if (inyectado) {
-      this._tenants = validarTenants(JSON.parse(process.env.ORQ_TENANTS_JSON ?? '{}'), 'ORQ_TENANTS_JSON');
-      this._perfil = validarPerfil(JSON.parse(inyectado), 'ORQ_PERFIL_JSON');
-      this.logger.log(
-        `config inyectada: ${this._tenants.length} tenant(s), modo=${this._perfil.modo}`,
-      );
-      return;
-    }
-
+    // Destinos y perfil se resuelven POR SEPARADO, y eso importa.
+    //
+    // Lo inyectado por entorno pasa por LOS MISMOS validadores que el YAML: una
+    // corrida de prueba tiene que ejercitar el mismo camino de codigo que la de
+    // verdad, o no esta probando lo que crees.
+    //
+    // En Fargate se inyecta SOLO la lista de destinos: Terraform la conoce -es
+    // el mismo for_each que crea los tenants- y el YAML de la imagen no puede
+    // saber los hosts de Cloud Map. El perfil sigue viniendo del archivo, que
+    // es donde O-01 quiere que viva la forma de la prueba.
+    //
+    // ⚠ Antes las dos colgaban de ORQ_PERFIL_JSON: sin el, ORQ_TENANTS_JSON se
+    // ignoraba EN SILENCIO y el orquestador le pegaba a los localhost del
+    // ejemplo de desarrollo.
     const dir = process.env.ORQ_CONFIG_DIR ?? join(process.cwd(), 'config');
+    const destinosJson = process.env.ORQ_TENANTS_JSON;
+    const perfilJson = process.env.ORQ_PERFIL_JSON;
 
-    this._tenants = leerTenants(join(dir, 'tenants.yaml'));
-    this._perfil = leerPerfil(join(dir, 'perfil.yaml'));
+    this._tenants = destinosJson
+      ? validarTenants(JSON.parse(destinosJson), 'ORQ_TENANTS_JSON')
+      : leerTenants(join(dir, 'tenants.yaml'));
+
+    this._perfil = perfilJson
+      ? validarPerfil(JSON.parse(perfilJson), 'ORQ_PERFIL_JSON')
+      : leerPerfil(join(dir, 'perfil.yaml'));
 
     this.logger.log(
-      `config: ${this._tenants.length} tenants, modo=${this._perfil.modo}, ` +
+      `config: ${this._tenants.length} tenants ${destinosJson ? '(inyectados)' : '(yaml)'}, ` +
+      `modo=${this._perfil.modo} ${perfilJson ? '(inyectado)' : '(yaml)'}, ` +
       `reparto=${this._perfil.reparto.tipo}, llegadas=${this._perfil.llegadas.tipo}`,
     );
   }

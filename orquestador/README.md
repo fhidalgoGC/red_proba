@@ -175,6 +175,7 @@ Sin el aumento de cuota, la prueba mide throttling en vez de arquitectura.
 | `O-07` | Endpoint `/status` | `src/metricas/status.controller.ts` |
 | `O-08` | **Manifiesto de expedientes** ⚠ | `src/metricas/manifiesto.service.ts` |
 | `O-09` | Conciliación contra C4 | `src/conciliacion/`, `src/cli/conciliar.ts` |
+| `O-10` | Descarga del informe | `src/metricas/logs.controller.ts` |
 
 ### Las dos que no se negocian
 
@@ -302,6 +303,7 @@ ORQ_LOGS_DIR=/ruta npm start    # logs a otra carpeta
 | `GET /status/tenants` | el desglose por tenant — el reparto Zipf se ve acá |
 | `GET /status/serie?segundos=120` | la serie segundo a segundo (P2 y P3) |
 | `GET /status/plan` | el reparto tal como lo calculó el planificador |
+| `GET /logs/<id>` | **baja** `logs/<id>.json` — con `<id>__manifiesto`, el manifiesto |
 
 
 ### Swagger — `http://localhost:3000/docs`

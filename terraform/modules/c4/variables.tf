@@ -46,3 +46,43 @@ variable "log_retention_days" {
   type    = number
   default = 1
 }
+
+variable "acceso_externo" {
+  type        = bool
+  description = "IP publica en la task y endpoint publico en RDS. Ver modules/network/acceso-externo.tf."
+  default     = false
+}
+
+variable "concurrencia" {
+  type        = number
+  description = <<-D
+    Lazos de recepcion concurrentes dentro de cada task de C4.
+
+    Con 1 -el defecto- el consumidor se comporta como antes de que esto
+    existiera: ~200 msg/s por task, con la CPU ociosa 40 de cada 50 ms
+    esperando a SQS.
+
+    El pool de Postgres se dimensiona a partir de aqui (`concurrencia × 10`),
+    porque cada grupo del lote abre su propia transaccion.
+  D
+  default     = 1
+
+  validation {
+    condition     = var.concurrencia >= 1 && var.concurrencia <= 64
+    error_message = "Entre 1 y 64. Por encima el cuello es la base, no el consumidor."
+  }
+}
+
+variable "lote_transaccion" {
+  type        = bool
+  description = <<-D
+    Persistir el lote entero en UNA transaccion.
+
+    ⚠ CAMBIA LO QUE MIDE P1. Los N eventos comparten COMMIT, asi que comparten
+      `e10`: el tramo e9→e10 pasa a medir el lote y no el evento.
+
+    Apagado por defecto para que la medicion siga significando lo mismo salvo
+    que alguien decida lo contrario a proposito.
+  D
+  default     = false
+}

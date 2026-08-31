@@ -2,6 +2,10 @@
 dist-test/
 dist/
 node_modules/
-
+ACCESO.md
+*.sh
 # credenciales locales; .env.ejemplo es la plantilla
 .env
+c3/.env
+c4/.env
+orquestador/.env

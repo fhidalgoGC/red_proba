@@ -29,10 +29,15 @@
 # tablas se vacían, no se tiran: el esquema lo recrea cada servicio al arrancar
 # y tirarlo aquí solo añadiría una forma más de que el arranque falle).
 #
-# NO toca la cola SQS. Está en AWS y es compartida; purgarla es una decisión
-# tuya. Si quedaron mensajes de la corrida anterior, C4 los volverá a insertar
-# al arrancar y los números de la siguiente corrida saldrán inflados — el
-# script te recuerda el comando al final.
+# NO toca la cola SQS. Está en AWS y purgarla es una decisión tuya: si quedaron
+# mensajes de la corrida anterior, C4 los volverá a insertar al arrancar y los
+# números de la siguiente corrida saldrán inflados — el script te recuerda el
+# comando al final.
+#
+# La cola local (`rpf-one-local-eventos.fifo`) es OTRA que la del despliegue, y
+# eso no es comodidad: con una sola, tu C4 y el de Fargate compiten por los
+# mismos mensajes y cada uno se lleva la mitad, sin un error y con P4 dando de
+# menos. La crea Terraform; sale en `tofu output cola_local_url`.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
@@ -236,10 +241,12 @@ tenue "el esquema de las bases sigue en pie · lo revalida cada servicio al arra
 tenue "intactos · dist/ · node_modules/ · los .env"
 printf '\n'
 aviso "la cola SQS NO se tocó. Si quedaron mensajes de la corrida anterior,"
-tenue "C4 los insertará al arrancar y la próxima medición saldrá inflada:"
-printf '%s    aws sqs get-queue-attributes --queue-url "$SQS_QUEUE_URL" \\\n' "$A_GRIS"
+tenue "C4 los insertará al arrancar y la próxima medición saldrá inflada."
+tenue "La de LOCAL es la que sale de c4/.env — no la del despliegue:"
+printf '%s    Q=$(grep -m1 SQS_QUEUE_URL c4/.env | cut -d= -f2-)\n' "$A_GRIS"
+printf '    aws sqs get-queue-attributes --queue-url "$Q" \\\n'
 printf '      --attribute-names ApproximateNumberOfMessages\n'
-printf '    aws sqs purge-queue --queue-url "$SQS_QUEUE_URL"%s\n\n' "$A_FIN"
+printf '    aws sqs purge-queue --queue-url "$Q"%s\n\n' "$A_FIN"
 tenue "levantar todo de nuevo:  sh start"
 printf '\n'
 

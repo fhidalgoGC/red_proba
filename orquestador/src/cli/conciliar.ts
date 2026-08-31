@@ -46,6 +46,27 @@ if (!rutaManifiesto || !rutaInbox) {
 const manifiesto = leer<Manifiesto>(resolve(rutaManifiesto), 'manifiesto');
 const inbox = leer<VolcadoInbox>(resolve(rutaInbox), 'volcado del inbox');
 
+// ⚠ CRUZAR DOS CORRIDAS DISTINTAS DA UN RESULTADO QUE PARECE VALIDO.
+//
+// El volcado del inbox lleva ahora el id de corrida por el que se filtro
+// (`--prueba`), asi que el desajuste se puede DETECTAR en vez de descubrirlo
+// leyendo un residuo enorme y concluyendo que se perdieron mensajes. Se avisa
+// y no se falla: conciliar a proposito el manifiesto de una prueba contra el
+// volcado de otra es una comprobacion legitima, solo que rarisima.
+if (inbox.prueba && inbox.prueba !== manifiesto.prueba) {
+  console.warn(
+    `⚠ el manifiesto es de '${manifiesto.prueba}' y el volcado del inbox de ` +
+    `'${inbox.prueba}'. Todo lo que salga como faltante o desconocido es ese desajuste, ` +
+    'no una perdida.',
+  );
+} else if (!inbox.prueba && !inbox.desde) {
+  console.warn(
+    '⚠ el volcado del inbox no lleva corte: es TODA la base de C4, no esta corrida. ' +
+    'Los expedientes de pruebas anteriores saldran como desconocidos. ' +
+    'Vuelve a correr `npm run informe -- --prueba <id>` en c4.',
+  );
+}
+
 const v = conciliar(manifiesto, inbox);
 
 const destino = resolve(

@@ -334,13 +334,23 @@ export class RegistroService implements OnModuleInit, OnApplicationShutdown {
   /** Empieza a registrar un batch nuevo. Borra el estado del anterior. */
   comenzar(): void {
     this.prueba = this.corrida.pruebaId;
-    this.archivo = join(this.dir, `${this.prueba}.json`);
+    this.archivo = this.rutaDe(this.prueba);
     this.arranque = null;
     this.terminadoEn = null;
     this.ultimoInforme = null;
     this.archivoManifiesto = null;
     this.abierta = true;
   }
+
+  /**
+   * Donde iria el informe de una prueba cualquiera, no solo de la activa.
+   *
+   * Lo usa `GET /logs/:id`: el nombre del archivo lo decide quien lo escribe,
+   * asi que el que lo sirve pregunta en vez de volver a construirlo — dos
+   * sitios armando la misma ruta es un 404 esperando a que uno de los dos
+   * cambie.
+   */
+  rutaDe(prueba: string): string { return join(this.dir, `${prueba}.json`); }
 
   get informe(): InformeCorrida | null { return this.ultimoInforme; }
   get carpeta(): string { return this.dir; }

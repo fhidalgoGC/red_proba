@@ -7,6 +7,7 @@ import { CifradorService } from './cripto/cifrador.service';
 import { FirmadorService } from './cripto/firmador.service';
 import { PseudonimoService } from './cripto/pseudonimo.service';
 import { EventosController } from './eventos.controller';
+import { LogsController } from './logs.controller';
 import { ObservabilidadController } from './observabilidad.controller';
 import { MapperService } from './mapper/mapper.service';
 import { PipelineService } from './pipeline/pipeline.service';
@@ -19,7 +20,7 @@ import { RegistroService } from './metricas/registro.service';
   // El relay vive en el MISMO proceso que el API (D-07): un @Interval, no un
   // contenedor aparte.
   imports: [ScheduleModule.forRoot()],
-  controllers: [EventosController, ObservabilidadController],
+  controllers: [EventosController, ObservabilidadController, LogsController],
   providers: [
     ConfigService,
     BdService,

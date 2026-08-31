@@ -105,13 +105,38 @@ instante**.
 margen bajo los 256 KB.
 
 ```
-MessageGroupId          = rpf_id         ordena los eventos del expediente
-MessageDeduplicationId  = payload_hash   sha256 del canónico EN CLARO
+MessageGroupId            = rpf_id         ordena los eventos del expediente
+MessageDeduplicationId    = payload_hash   sha256 del canónico EN CLARO
+MessageAttributes.prueba  = outbox.prueba  el id de corrida  (opcional)
 ```
 
-**Los dos van en claro**, y no es un descuido: el cuerpo está cifrado, así que
-SQS no puede leer nada de él. Si viajaran dentro, la cola no tendría de dónde
-sacar ni el orden ni la deduplicación.
+**Los tres van en claro**, y no es un descuido: el cuerpo está cifrado, así que
+SQS no puede leer nada de él. Si los dos primeros viajaran dentro, la cola no
+tendría de dónde sacar ni el orden ni la deduplicación.
+
+### El tercero: el id de corrida cruzando al otro dominio
+
+`prueba` es el `x-prueba-id` que generó el orquestador, viajó en la cabecera
+hasta C3 y se guardó en `outbox.prueba` (esa columna existe justo por esto: el
+relay corre en su propio timer y no tiene la petición delante). Aquí sale de la
+fila reclamada y sigue hasta C4.
+
+**Para qué.** C4 es **uno** para los 50 tenants y consume una cola compartida.
+Sin este atributo, todo lo que mide cae en un único montón: dos corridas
+seguidas quedan sumadas en el mismo archivo y P2 de la segunda sale inflada. Con
+él, C4 escribe `<prueba>__c4.json` y guarda el id en `inbox.prueba`, que es lo
+que hace exacto el corte de su informe (`G-08`).
+
+**Fuera del payload, y eso no se negocia.** El payload va firmado: meterle el id
+de la corrida cambiaría lo que se firma (regla 8) y además dejaría metadato de la
+prueba dentro del asiento fiscal que guarda el operador neutro.
+
+**No toca el dedup.** `MessageDeduplicationId` es explícito, así que añadir
+atributos no cambia lo que SQS considera duplicado. Si la deduplicación fuera por
+contenido, este atributo la habría roto en silencio.
+
+Es opcional: una fila sin `prueba` —una corrida lanzada sin cabecera— sale sin el
+atributo, y C4 la contabiliza bajo `sin-id`.
 
 ### Un envío parcial es NORMAL
 

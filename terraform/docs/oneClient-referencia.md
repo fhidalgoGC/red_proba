@@ -1,18 +1,26 @@
 # oneClient — referencia
 
-Generado por `scripts/actualizar.sh` el 2026-08-30 04:16 UTC.
+Generado por `scripts/encender.sh` el 2026-08-31 23:26 UTC.
 **No editar a mano** — se reescribe en cada crear/actualizar.
 
 ```
   api_hosts = {
     "01" = "api-01.poc.local"
   }
+  bastiones = {
+    "c3" = "i-066f1fdddd372b073"
+    "c4" = "i-02ba67a20b44821ce"
+  }
   bucket_exportacion = "rpf-one-exportacion-74360e71"
+  cola_local_url = "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-local-eventos.fifo"
   cola_url = "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-eventos.fifo"
   db_endpoints = {
-    "c4" = ""
-    "tenants" = {}
+    "c4" = "rpf-one-c4-db.cqvmxq0evdzn.us-west-2.rds.amazonaws.com"
+    "tenants" = {
+      "01" = "rpf-one-db-01.cqvmxq0evdzn.us-west-2.rds.amazonaws.com"
+    }
   }
+  dlq_local_url = "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-local-eventos-dlq.fifo"
   dlq_url = "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-eventos-dlq.fifo"
   ecr = {
     "c3-api" = "276076558677.dkr.ecr.us-west-2.amazonaws.com/rpf-one-c3-api"
@@ -26,11 +34,11 @@ Generado por `scripts/actualizar.sh` el 2026-08-30 04:16 UTC.
     "mensajes_c4" = "arn:aws:kms:us-west-2:276076558677:key/f8940502-057c-42b3-9a09-8d40cf673f68"
   }
   resumen = {
-    "desired_count" = 0
-    "encendido" = "NO — solo infra, cero computo"
+    "desired_count" = 1
+    "encendido" = "SI — facturando computo"
     "escenario" = "oneClient"
     "region" = "us-west-2"
-    "run_id" = "2026-08-29-humo"
+    "run_id" = "2026-08-31-humo"
     "tenants" = tolist([
       "01",
     ])

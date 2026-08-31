@@ -29,12 +29,40 @@ los 50 y lo único que cambia entre ellos es esto (D-07).
 
 | Variable | Si falta |
 |---|---|
-| `DATABASE_URL` | **El proceso muere al arrancar.** Sin outbox, C3 contestaría 202 a eventos que nunca van a existir |
+| `DATABASE_URL` — o las piezas `DB_*` | **El proceso muere al arrancar.** Sin outbox, C3 contestaría 202 a eventos que nunca van a existir |
 | `SQS_QUEUE_URL` | **El proceso muere.** Es la única salida: sin ella el outbox se llena y nada llega a C4, con el contenedor en verde y sin un solo error |
 
 Las dos matan el arranque a propósito. Un contenedor mal configurado tiene que
 morir al arrancar, no a los diez minutos con el primer evento que no puede
 entregar.
+
+### La base: entera, o en piezas
+
+En local la URL llega entera en `DATABASE_URL`. **En Fargate no puede llegar
+entera**, y no es una preferencia: la contraseña la inyecta ECS desde Secrets
+Manager en su propia variable, y una task definition no sabe interpolar un
+secreto dentro de otra variable. Así que allí llegan las piezas y `urlDeBase()`
+—al pie de `src/config/config.service.ts`— arma la URL.
+
+| Variable | Por defecto | |
+|---|---|---|
+| `DB_HOST` | — | endpoint de RDS. **Obligatoria** si no hay `DATABASE_URL` |
+| `DB_USER` | — | **Obligatoria** si no hay `DATABASE_URL` |
+| `DB_PASSWORD` | vacía | la inyecta ECS desde Secrets Manager |
+| `DB_PORT` | `5432` | |
+| `DB_NAME` | `poc` | |
+| `DB_SSLMODE` | `no-verify` | |
+
+`DATABASE_URL` gana si está puesta: las piezas son el camino alternativo, no
+una capa encima.
+
+**Por qué `no-verify` y no `require`.** RDS PostgreSQL 15+ trae
+`rds.force_ssl=1`, así que la conexión en claro se rechaza — pero la CA de RDS
+no está en el trust store de Node, y `require` la verificaría y fallaría con
+«self-signed certificate in certificate chain». `no-verify` cifra el transporte
+sin verificar la cadena, que es lo que corresponde a una base en una subnet sin
+ruta a internet y alcanzable solo desde su propio security group. Contra el
+Postgres local, que no habla TLS, va `DB_SSLMODE=disable`.
 
 ---
 

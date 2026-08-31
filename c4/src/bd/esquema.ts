@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS ${e}.inbox (
   bytes_sobre     INT,
   bytes_canonicos INT,
 
+  -- El id de corrida, del MessageAttribute 'prueba' que escribe el relay de
+  -- C3 copiando el x-prueba-id del orquestador. Es METADATO de la prueba,
+  -- NO del evento: por eso es columna y no va dentro del payload, que va
+  -- firmado (regla 8).
+  --
+  -- Sin ella, 'npm run informe' solo puede recortar por --desde <ISO>, y una
+  -- ventana temporal no distingue dos corridas que se solapan ni sobrevive a
+  -- que alguien se equivoque de hora. Con ella, --prueba <id> vuelca
+  -- exactamente lo de esa corrida y la conciliacion de P4 deja de depender de
+  -- acertar el corte.
+  prueba          TEXT,
+
   -- Marcas e7..e10 (07-medicion). Nunca dentro del payload: el payload va
   -- firmado y meterle metadatos de medicion cambiaria lo que se firmo.
   sqs_enviado     TIMESTAMPTZ,   -- SentTimestamp de SQS, aproximacion de e6
@@ -53,6 +65,8 @@ CREATE TABLE IF NOT EXISTS ${e}.inbox (
 
 CREATE INDEX IF NOT EXISTS inbox_rpf_seq ON ${e}.inbox (rpf_id, sequence);
 CREATE INDEX IF NOT EXISTS inbox_e7      ON ${e}.inbox (e7_recibido);
+-- El indice de 'prueba' va al final del script, DESPUES del ALTER que crea la
+-- columna: aqui todavia no existe en una base anterior a G-11.
 
 -- ── G-04 · Los cinco schemas ───────────────────────────────────────────
 
@@ -139,8 +153,22 @@ CREATE TABLE IF NOT EXISTS ${e}.descartes (
   recepciones   INT,
   a_la_dlq      BOOLEAN NOT NULL DEFAULT false,
   e7_recibido   TIMESTAMPTZ,
+  prueba        TEXT,
   registrado    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS descartes_motivo ON ${e}.descartes (motivo);
+
+-- ── Altas de columna sobre una base que ya existe ──────────────────────
+--
+-- CREATE TABLE IF NOT EXISTS no toca una tabla que ya esta, asi que una base
+-- creada antes de G-11 se quedaria sin la columna 'prueba' y el INSERT
+-- fallaria en cada mensaje. ADD COLUMN IF NOT EXISTS es idempotente y en una
+-- tabla vacia o pequena es instantaneo: en Postgres, anadir una columna
+-- nullable sin default no reescribe la tabla.
+ALTER TABLE ${e}.inbox     ADD COLUMN IF NOT EXISTS prueba TEXT;
+ALTER TABLE ${e}.descartes ADD COLUMN IF NOT EXISTS prueba TEXT;
+
+-- Y el indice DESPUES del ALTER, por lo mismo.
+CREATE INDEX IF NOT EXISTS inbox_prueba ON ${e}.inbox (prueba);
 `;
 }

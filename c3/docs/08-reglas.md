@@ -75,7 +75,7 @@ necesaria. Lo que se firma llega ya hecho del orquestador, con su PRNG sembrado.
 ### Un solo reloj dentro de un dominio
 
 `e5` de Postgres y `e6` de Node hacían que el tramo diera **negativo**. Dentro
-de C3 todas las marcas salen del mismo proceso. M-06 acepta la deriva entre C3 y
+de C3 todas las marcas salen del mismo proceso. M-08 acepta la deriva entre C3 y
 C4 porque están en cuentas distintas; dentro de un contenedor no hay excusa.
 
 ### C3 y C4 no comparten base

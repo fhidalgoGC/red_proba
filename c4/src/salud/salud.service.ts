@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { BdService } from '../bd/bd.service';
 import { ConsumidorService } from '../consumidor/consumidor.service';
+import { RegistroService } from '../metricas/registro.service';
 import type { SaludDto, StatusDto } from './salud.dto';
 
 /**
@@ -20,6 +21,7 @@ export class SaludService {
     private readonly config: ConfigService,
     private readonly bd: BdService,
     private readonly consumidor: ConsumidorService,
+    private readonly registro: RegistroService,
   ) {}
 
   /** Lo que responde `/health`. La consulta de verdad va aqui. */
@@ -42,8 +44,19 @@ export class SaludService {
     };
   }
 
-  /** Contadores en memoria. No toca la base: es el lado barato. */
+  /**
+   * Contadores en memoria. No toca la base: es el lado barato.
+   *
+   * Dos niveles, y hacen falta los dos. `consumidor.contadores` es del PROCESO
+   * y se resetea al reiniciar; `metricas` es por CORRIDA, que es la unidad en
+   * la que se leen los resultados. Con solo el primero, dos pruebas seguidas
+   * en el mismo contenedor salen sumadas.
+   */
   estado(): StatusDto {
-    return { rol: 'operador-neutro', consumidor: this.consumidor.estado() };
+    return {
+      rol: 'operador-neutro',
+      consumidor: this.consumidor.estado(),
+      metricas: this.registro.resumen(),
+    };
   }
 }

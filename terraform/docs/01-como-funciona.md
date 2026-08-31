@@ -50,7 +50,7 @@ costo de la PoC.
 |---|---|---|---|---|
 | **Destruido** | — | — | — | $0 |
 | **Apagado** (`desired_count=0`) | 0 tareas | 0 | destruidas¹ | ~$0,15/día |
-| **Encendido** (`desired_count=1`) | tareas | 12 por AZ | 51 | ~$2,88/día por AZ + RDS + Fargate + KMS |
+| **Encendido** (`desired_count=1`) | tareas | 14 por AZ | 51 | ~$3,36/día por AZ + RDS + Fargate + KMS |
 
 ¹ salvo `rds_persistente = true`. Ver [04 · Bases de datos](04-bases.md).
 

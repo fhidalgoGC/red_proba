@@ -13,6 +13,31 @@ output "resumen" {
 output "cola_url" { value = module.messaging.cola_url }
 output "dlq_url" { value = module.messaging.dlq_url }
 
+# ── Las de desarrollo local ──
+# Van APARTE porque tienen que ir aparte: con una sola cola, el C4 de tu
+# portatil y el de Fargate compiten por los mismos mensajes y se llevan la
+# mitad cada uno, sin un solo error y con P4 dando de menos. Estas son las que
+# van en `c3/.env` y `c4/.env`.
+output "cola_local_url" {
+  description = "Cola FIFO para el pipeline local. NUNCA la del despliegue."
+  value       = try(module.messaging_local[0].cola_url, null)
+}
+
+output "dlq_local_url" {
+  value = try(module.messaging_local[0].dlq_url, null)
+}
+
+# ── Bastiones · null cuando acceso_externo = false ──
+# Son el --target de `aws ssm start-session`. El helper `sh tunel` los lee de
+# aqui, asi que no hace falta copiarlos a mano.
+output "bastiones" {
+  description = "Instance ids de los bastiones, uno por VPC. Ver sh tunel --lista."
+  value = {
+    c3 = try(module.bastion_c3[0].id, null)
+    c4 = try(module.bastion_c4[0].id, null)
+  }
+}
+
 output "api_hosts" {
   description = "Lo que resuelve el orquestador por Cloud Map."
   value       = module.tenant.api_hosts

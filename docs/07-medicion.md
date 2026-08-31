@@ -133,7 +133,39 @@ Durante la corrida solo necesitas saber si seguir o parar. Cuatro series:
 **Sin dimensión por tenant** — multiplica por 50 el costo y no dice nada que
 necesites en el momento.
 
-### M-06 · Reloj común
+### M-06 · Un reloj MONÓTONO para las duraciones, además de las marcas
+
+Las marcas `e0..e10` son ISO 8601: resolución de **milisegundo**. Con eso basta
+para el extremo a extremo y para conciliar, pero no para los tramos internos —
+canonizar 3 KB tarda ~0,05 ms y verificar Ed25519 es sub-milisegundo. Restar dos
+marcas da `0 ms` y el informe diría que el pipeline es gratis.
+
+Así que los tres procesos llevan, **además**, muestras de duración tomadas con
+`process.hrtime.bigint()`: monótono —no lo mueve un ajuste de NTP a mitad de
+corrida— y con resolución de nanosegundo. Van a los logs por segundo
+(`C-09` en C3, `G-11` en C4, el informe del orquestador) y **no sustituyen a las
+marcas**: las marcas son instantes que sobreviven al proceso y se cruzan entre
+dominios; estas son duraciones que viven en memoria.
+
+Cada tramo lleva su par `init`/`completed`, anotados en el segundo en que
+**empezó** y en el que **terminó**. Que no coincidan es lo normal y es el dato:
+`init − completed` señala en qué paso se quedó lo que no salió.
+
+### M-07 · El id de corrida viaja con el evento, fuera del payload
+
+`x-prueba-id` lo genera el orquestador, va en la cabecera hasta C3, C3 lo guarda
+en `outbox.prueba`, el relay lo copia al `MessageAttribute` `prueba` del mensaje
+SQS, y C4 lo lee y lo guarda en `inbox.prueba`.
+
+Es lo que hace que los cuatro archivos de una corrida compartan prefijo y que se
+puedan cruzar. Sin él, C4 —que es uno para los 50 tenants y consume una cola
+compartida— sumaría dos corridas seguidas en el mismo montón.
+
+**Fuera del payload, siempre** (M-01): el payload va firmado y el id de una
+prueba no pertenece a un asiento fiscal. Y no toca la deduplicación, que es
+explícita por `payload_hash` (D-11).
+
+### M-08 · Reloj común
 
 `e6` lo estampa un contenedor de C3 y `e7` otro de C4, en otra cuenta. La resta
 solo tiene sentido si los relojes están sincronizados. Con el servicio de tiempo

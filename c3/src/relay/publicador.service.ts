@@ -4,7 +4,7 @@
  * Es el ÚNICO canal entre C3 y C4: entre los dos dominios no hay ruta de red
  * (D-03). Lo que no salga por aquí no llega, y no hay segunda vía.
  *
- * ⚠ LOS DOS ATRIBUTOS VAN EN CLARO, y no es un descuido:
+ * ⚠ LOS DOS ATRIBUTOS DE SISTEMA VAN EN CLARO, y no es un descuido:
  *
  *   MessageGroupId         = rpf_id        ordena los eventos del expediente
  *   MessageDeduplicationId = payload_hash  sha256 del canonico EN CLARO
@@ -15,6 +15,31 @@
  * distinto cada vez: el mismo evento cifrado dos veces da bytes distintos, asi
  * que la deduplicacion por contenido de SQS no detectaria nunca un duplicado
  * (regla 5, D-11). Hay que desactivarla y mandar el id explicito.
+ *
+ * ────────────────────────────────────────────────────────────────────────
+ * Y UN TERCERO, DE USUARIO: `prueba` — EL ID DE CORRIDA
+ *
+ *   MessageAttributes.prueba = el `x-prueba-id` que trajo la peticion
+ *
+ * Es el mismo id que el orquestador genera al arrancar la corrida, que viaja
+ * en la cabecera `x-prueba-id` hasta C3 y que C3 guarda en `outbox.prueba`.
+ * Aqui sale de la fila reclamada y sigue hasta C4, que lo usa para separar sus
+ * metricas por corrida — sin el, todo lo que mide C4 cae en un unico monton y
+ * dos pruebas seguidas quedan sumadas en el mismo archivo.
+ *
+ * ⚠ FUERA DEL PAYLOAD, Y ESO NO ES NEGOCIABLE. El payload va firmado: meterle
+ * el id de la corrida cambiaria lo que se firma (regla 8) y ademas dejaria
+ * metadato de la prueba dentro del asiento fiscal que guarda el operador
+ * neutro. Como atributo, viaja al lado del sobre y no lo toca.
+ *
+ * ⚠ NO ENTRA EN EL DEDUP. `MessageDeduplicationId` es explicito
+ * (`payload_hash`), asi que anadir atributos no cambia lo que SQS considera
+ * duplicado. Si la deduplicacion fuera por contenido, este atributo la habria
+ * roto en silencio.
+ *
+ * Es opcional: una fila sin `prueba` —una corrida lanzada sin cabecera— sale
+ * sin el atributo y C4 la contabiliza bajo `sin-id`.
+ * ────────────────────────────────────────────────────────────────────────
  */
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import {
@@ -114,6 +139,11 @@ export class PublicadorService implements OnApplicationShutdown {
         MessageBody: JSON.stringify(f.envelope),
         MessageGroupId: f.rpfId,
         MessageDeduplicationId: f.payloadHash,
+        // El id de corrida, para que C4 pueda separar sus metricas por prueba
+        // igual que C3 y el orquestador. Ver el comentario de arriba.
+        ...(f.prueba
+          ? { MessageAttributes: { prueba: { DataType: 'String', StringValue: f.prueba } } }
+          : {}),
       };
     });
 

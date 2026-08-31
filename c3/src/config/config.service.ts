@@ -6,10 +6,13 @@
  * mal configurado tiene que morir al arrancar, no a los diez minutos con el
  * primer evento que no puede firmar.
  *
- * ⚠ `DATABASE_URL` es obligatoria desde C-05 y `SQS_QUEUE_URL` desde C-06: el
+ * ⚠ La base es obligatoria desde C-05 y `SQS_QUEUE_URL` desde C-06: el
  * outbox es la unica fuente de lo que llega a C4 y el relay su unica salida.
  * Un C3 sin base o sin cola no puede entregar nada, y arrancarlo seria peor
  * que no arrancarlo — contestaria 202 a eventos que jamas van a viajar.
+ *
+ * La base llega entera en `DATABASE_URL` o en piezas (`DB_HOST`, `DB_PORT`,
+ * `DB_NAME`, `DB_USER`, `DB_PASSWORD`); ver `urlDeBase()` al pie.
  */
 import { Injectable, Logger } from '@nestjs/common';
 
@@ -83,11 +86,12 @@ export class ConfigService {
 
     this.eventosPorDataKey = Math.max(1, entero('C3_EVENTOS_POR_DATA_KEY', 100));
 
-    const bd = process.env.DATABASE_URL?.trim();
+    const bd = urlDeBase();
     if (!bd) {
       throw new Error(
-        'falta DATABASE_URL. Desde C-05 el outbox es la unica fuente de lo que llega a C4: ' +
-          'sin base, C3 contestaria 202 a eventos que nunca se van a publicar.',
+        'falta DATABASE_URL (o DB_HOST + DB_USER + DB_PASSWORD). Desde C-05 el outbox es la ' +
+          'unica fuente de lo que llega a C4: sin base, C3 contestaria 202 a eventos que ' +
+          'nunca se van a publicar.',
       );
     }
     this.bdUrl = bd;
@@ -150,4 +154,40 @@ function entero(nombre: string, porDefecto: number): number {
   const n = Number(v);
   if (!Number.isInteger(n)) throw new Error(`${nombre}='${v}' no es un entero`);
   return n;
+}
+
+/**
+ * La URL de Postgres — entera, o armada desde las partes.
+ *
+ * En local llega entera en `DATABASE_URL`. En Fargate NO PUEDE llegar entera:
+ * la contrasena la inyecta ECS desde Secrets Manager en su propia variable, y
+ * una task definition no sabe interpolar un secreto dentro de otra variable.
+ * Asi que ahi llegan las piezas —`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+ * `DB_PASSWORD`— y la URL se arma aca.
+ *
+ * ⚠ `sslmode=no-verify`, no `require`. RDS PostgreSQL 15+ trae
+ * `rds.force_ssl=1`: la conexion en claro se rechaza. Pero la CA de RDS no
+ * esta en el trust store de Node, y `require` la verificaria y fallaria con
+ * «self-signed certificate in certificate chain». `no-verify` cifra el
+ * transporte sin verificar la cadena — que es lo que corresponde a una base
+ * en una subnet sin ruta a internet, alcanzable solo desde su propio security
+ * group. `DB_SSLMODE` lo deja cambiar sin recompilar.
+ */
+export function urlDeBase(): string | null {
+  const entera = process.env.DATABASE_URL?.trim();
+  if (entera) return entera;
+
+  const host = process.env.DB_HOST?.trim();
+  const usuario = process.env.DB_USER?.trim();
+  if (!host || !usuario) return null;
+
+  const clave = process.env.DB_PASSWORD ?? '';
+  const puerto = process.env.DB_PORT?.trim() || '5432';
+  const base = process.env.DB_NAME?.trim() || 'poc';
+  const ssl = process.env.DB_SSLMODE?.trim() || 'no-verify';
+
+  return (
+    `postgres://${encodeURIComponent(usuario)}:${encodeURIComponent(clave)}` +
+    `@${host}:${puerto}/${base}?sslmode=${ssl}`
+  );
 }

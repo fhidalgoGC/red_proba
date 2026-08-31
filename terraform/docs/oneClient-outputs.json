@@ -11,10 +11,29 @@
       "01": "api-01.poc.local"
     }
   },
+  "bastiones": {
+    "sensitive": false,
+    "type": [
+      "object",
+      {
+        "c3": "string",
+        "c4": "string"
+      }
+    ],
+    "value": {
+      "c3": "i-066f1fdddd372b073",
+      "c4": "i-02ba67a20b44821ce"
+    }
+  },
   "bucket_exportacion": {
     "sensitive": false,
     "type": "string",
     "value": "rpf-one-exportacion-74360e71"
+  },
+  "cola_local_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-local-eventos.fifo"
   },
   "cola_url": {
     "sensitive": false,
@@ -29,14 +48,23 @@
         "c4": "string",
         "tenants": [
           "object",
-          {}
+          {
+            "01": "string"
+          }
         ]
       }
     ],
     "value": {
-      "c4": "",
-      "tenants": {}
+      "c4": "rpf-one-c4-db.cqvmxq0evdzn.us-west-2.rds.amazonaws.com",
+      "tenants": {
+        "01": "rpf-one-db-01.cqvmxq0evdzn.us-west-2.rds.amazonaws.com"
+      }
     }
+  },
+  "dlq_local_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-local-eventos-dlq.fifo"
   },
   "dlq_url": {
     "sensitive": false,
@@ -94,11 +122,11 @@
       }
     ],
     "value": {
-      "desired_count": 0,
-      "encendido": "NO — solo infra, cero computo",
+      "desired_count": 1,
+      "encendido": "SI — facturando computo",
       "escenario": "oneClient",
       "region": "us-west-2",
-      "run_id": "2026-08-29-humo",
+      "run_id": "2026-08-31-humo",
       "tenants": [
         "01"
       ]
