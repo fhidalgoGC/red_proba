@@ -209,3 +209,44 @@ test('el detalle se corta con tope declarado, nunca en silencio', () => {
   assert.equal(v.detalle_omitido, 20);
   assert.equal(v.orden.expedientes_ausentes, 30, 'el conteo es completo aunque el detalle se corte');
 });
+
+test('un hueco que dejo un rechazo del destino no acusa al orden', () => {
+  // ⚠ Lo encontro la prueba de punta a punta. Un 503 deja su `sequence`
+  // ausente en C4, pero ese evento nunca entro en el sistema: contarlo como
+  // hueco de orden dispararia la metrica mas grave de la corrida por un
+  // rechazo del destino, que es exactamente lo que el desglose de O-06
+  // existe para separar.
+  const v = conciliar(
+    man([exp({
+      rpf_id: RPF_A,
+      emitidos: [[1, 10]], aceptados: [[1, 4], [6, 10]], rechazados: [[5, 5]],
+    })]),
+    inbox([{ rpf_id: RPF_A, sequences: [[1, 4], [6, 10]], duplicados: 0 }]),
+  );
+
+  assert.equal(v.ok, true);
+  assert.equal(v.orden.expedientes_con_hueco_interior, 0, 'el orden no se toca');
+  assert.equal(v.clasificacion.sin_confirmar, 1);
+  // Pero el hueco NO desaparece del informe: se ve, con su culpable.
+  assert.equal(v.detalle.length, 1);
+  assert.equal(v.detalle[0]!.forma, 'hueco_interior');
+  assert.equal(v.detalle[0]!.clasificacion, 'sin_confirmar');
+});
+
+test('un expediente mixto cuenta en orden solo por la parte exigible', () => {
+  // Falta el 3 (aceptado → perdida) y el 10 (rechazado → sin confirmar).
+  // La forma que acusa al orden es la del 3, que es interior.
+  const v = conciliar(
+    man([exp({
+      rpf_id: RPF_A,
+      emitidos: [[1, 10]], aceptados: [[1, 9]], rechazados: [[10, 10]],
+    })]),
+    inbox([{ rpf_id: RPF_A, sequences: [[1, 2], [4, 9]], duplicados: 0 }]),
+  );
+
+  assert.equal(v.ok, false);
+  assert.equal(v.orden.expedientes_con_hueco_interior, 1);
+  assert.equal(v.orden.expedientes_truncados, 0, 'la cola que falta es la rechazada');
+  assert.equal(v.detalle[0]!.clasificacion, 'mixto');
+  assert.deepEqual(v.detalle[0]!.faltan, [[3, 3], [10, 10]]);
+});

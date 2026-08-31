@@ -10,6 +10,8 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "volcar": "tsc -p tsconfig.json && node dist/cli/volcar.js",
+    "conciliar": "tsc -p tsconfig.json && node dist/cli/conciliar.js",
+    "e2e:manifiesto": "tsc -p tsconfig.test.json && node dist-test/test/e2e-manifiesto.js",
     "prestart": "nest build"
   },
   "dependencies": {

@@ -92,9 +92,24 @@ export function conciliar(
     if (todas.length === 0) continue;
 
     const forma = formaDe(todas, llegadas);
-    if (forma === 'hueco_interior') orden.expedientes_con_hueco_interior++;
-    else if (forma === 'ausente') orden.expedientes_ausentes++;
-    else if (forma === 'cola') orden.expedientes_truncados++;
+
+    // ────────────────────────────────────────────────────────────────────
+    // LOS CONTADORES DE `orden` SOLO MIRAN LO EXIGIBLE.
+    //
+    // Un expediente al que le falta el 5 porque la peticion que lo llevaba
+    // volvio 503 tiene un hueco en el espacio de secuencias, pero eso NO
+    // invalida la afirmacion de orden: ese evento nunca entro en el sistema.
+    // Contarlo aqui haria que la metrica mas grave de la prueba se disparara
+    // por rechazos del destino, que es justo lo que el desglose de O-06
+    // existe para separar. El hueco se sigue viendo en `detalle`, con su
+    // clasificacion; lo que no hace es acusar al orden.
+    // ────────────────────────────────────────────────────────────────────
+    if (faltaExigible.length > 0) {
+      const formaExigible = formaDe(faltaExigible, llegadas);
+      if (formaExigible === 'hueco_interior') orden.expedientes_con_hueco_interior++;
+      else if (formaExigible === 'ausente') orden.expedientes_ausentes++;
+      else if (formaExigible === 'cola') orden.expedientes_truncados++;
+    }
 
     faltas.push({
       rpf_id: e.rpf_id,

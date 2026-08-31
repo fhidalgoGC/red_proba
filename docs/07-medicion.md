@@ -176,6 +176,77 @@ reportan aparte.
 intermedio. Con FIFO no debería ocurrir nunca, y por eso vale medirlo — un solo
 hueco invalida la afirmación de orden.
 
+### ⚠ Contar desde C4 solo no basta
+
+La consulta de huecos de C4 (G-05, más abajo) agrupa el inbox por `rpf_id` y
+compara el rango que ve contra los valores distintos que tiene dentro. **El
+rango lo definen los propios datos que llegaron**, así que solo encuentra
+huecos *interiores*:
+
+| Qué falta | ¿Lo ve C4? | Por qué |
+|---|---|---|
+| El `sequence` 5 de 1..10 | ✅ | El rango sigue siendo 1..10 y le faltan valores |
+| El `sequence` 1 | ❌ | `MIN` pasa a 2 y el rango 2..10 es denso |
+| Los `sequence` 9 y 10 | ❌ | `MAX` pasa a 8 y el rango 1..8 es denso |
+| El `rpf_id` entero | ❌ | No hay fila, no hay grupo, no hay nada que agrupar |
+
+Y el fallo más probable de esta PoC —una tarea de Fargate que muere con su
+outbox efímero encima— **se lleva justo la cola**. Desde C4 ese caso es
+indistinguible de un expediente que terminó ahí.
+
+Le falta un dato que solo tiene quien emitió: **cuántos eventos tenía que
+llevar ese expediente**. El payload no lo lleva, y no puede llevarlo — va
+firmado.
+
+### El manifiesto cierra el punto ciego
+
+El orquestador decide `rpf_id` y `sequence` (ver
+[04-orquestador](04-orquestador.md#o-08--manifiesto-de-expedientes)), así que es
+el único que sabe qué salió. Al cerrar la corrida escribe
+`orquestador/logs/<prueba>__manifiesto.json` con, por expediente, los rangos de
+`sequence` en cuatro estados:
+
+| Estado | Qué significa | ¿Se le puede exigir a C3? |
+|---|---|---|
+| `aceptados` | El destino contestó 2xx | **Sí.** Si no está en C4, es pérdida |
+| `rechazados` | Contestó, pero != 2xx | No: nunca entró |
+| `fallidos` | Timeout o error de red | No: no se sabe si entró |
+| `no_emitidos` | Se planificó y nunca salió | No: **no es un hueco, es el arnés** |
+
+⚠ **`no_emitidos` no es contabilidad decorativa.** Las secuencias se asignan al
+*planificar*, con segundos de antelación; un evento que el planificador no
+alcanza a disparar se lleva su `sequence` a la tumba. Sin esa marca, la
+conciliación vería su hueco en C4 y **acusaría a C3 de perder un evento que
+nunca existió**.
+
+El cruce se hace con dos comandos, después de la corrida:
+
+```bash
+cd c4          && npm run informe   -- --nombre <prueba> --desde <ISO>
+cd orquestador && npm run conciliar -- logs/<prueba>__manifiesto.json \
+                                       ../c4/logs/<prueba>__inbox.json
+```
+
+`--desde` no es opcional en la práctica: la base de C4 sobrevive a la corrida y
+sin corte temporal el volcado arrastra los expedientes de todas las pruebas
+anteriores.
+
+El veredicto sale con código 1 si hay pérdida, y separa lo que acusa a cada uno:
+
+```
+  PERDIDA              13   aceptado y ausente en C4      ← el defecto
+  sin confirmar        19   salió y nadie contestó
+  no emitidos           0   nunca salieron: arnés
+  huecos interiores     1   ⚠ invalidan el orden
+  colas truncadas       1
+  expedientes idos      1
+```
+
+⚠ **Los contadores de orden solo miran lo exigible.** Un hueco que dejó una
+petición rechazada con 503 aparece en el detalle, pero **no** cuenta como hueco
+de orden: ese evento nunca entró al sistema, y dejar que dispare la métrica más
+grave de la prueba borraría justo la distinción que O-06 existe para sostener.
+
 ## Esquema y consultas
 
 ```sql

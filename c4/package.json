@@ -9,7 +9,8 @@
     "start:dev": "nest start --watch",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
-    "e2e": "tsc -p tsconfig.test.json && node dist-test/test/e2e.js"
+    "e2e": "tsc -p tsconfig.test.json && node dist-test/test/e2e.js",
+    "informe": "tsc -p tsconfig.json && node dist/cli/informe.js"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1121.0",

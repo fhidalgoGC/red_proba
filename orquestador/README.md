@@ -142,6 +142,8 @@ Sin el aumento de cuota, la prueba mide throttling en vez de arquitectura.
 | `O-05` | Cliente HTTP con pool y timeouts | `src/emisor/emisor.service.ts` |
 | `O-06` | **Ofrecido vs aceptado** ⚠ | `src/metricas/metricas.service.ts` |
 | `O-07` | Endpoint `/status` | `src/metricas/status.controller.ts` |
+| `O-08` | **Manifiesto de expedientes** ⚠ | `src/metricas/manifiesto.service.ts` |
+| `O-09` | Conciliación contra C4 | `src/conciliacion/`, `src/cli/conciliar.ts` |
 
 ### Las dos que no se negocian
 
@@ -162,6 +164,78 @@ que un evento no llegue, porque cada una acusa a un culpable distinto:
 | `fallidos` | timeout o error de red. No hubo respuesta. |
 
 ---
+
+## El manifiesto y la conciliación (`O-08` / `O-09`)
+
+**El problema**: C4 sabe lo que llegó, pero no lo que tenía que llegar. Su
+consulta de huecos compara el rango que ve contra los valores que tiene dentro,
+y ese rango lo definen los propios datos que llegaron — así que si falta la
+**cola** de un expediente, el `MAX` se desplaza y el rango sigue siendo denso.
+Y una tarea de Fargate que muere con su outbox efímero encima se lleva justo la
+cola.
+
+**La solución**: el orquestador decide `rpf_id` y `sequence`, así que es el
+único que puede afirmar qué salió. Al cerrar la corrida escribe el manifiesto:
+
+```json
+{
+  "rpf_id": "3c77b808-…", "tenant": "tenant-01",
+  "emitidos":   [[1, 10]],
+  "aceptados":  [[1, 9]],      ← el destino contestó 2xx: esto SÍ se le exige
+  "rechazados": [[10, 10]],    ← contestó 503: nunca entró
+  "fallidos":   [],
+  "no_emitidos":[]             ← se planificó y no salió: es el arnés
+}
+```
+
+Los rangos no son una optimización cosmética: en el perfil grande son 2,5
+millones de expedientes, y la resta se hace sobre estructuras del tamaño del
+número de huecos, que en una corrida sana es cero.
+
+### Las tres cosas que hacen que el número sea defendible
+
+1. **Se anota donde el evento sale por el cable** (`EmisorService`), no donde se
+   planifica. Las secuencias se asignan segundos antes de disparar; anotarlas
+   ahí contaría como emitido lo que solo estaba previsto.
+2. **`no_emitidos` existe.** Un evento que el planificador no alcanzó a disparar
+   deja un hueco en el espacio de secuencias que **no es un hueco del sistema**.
+   Sin esa marca, la conciliación acusaría a C3 de perder eventos que nunca
+   existieron.
+3. **El tope se declara.** `ORQ_MANIFIESTO_TOPE` (200.000). Un manifiesto
+   truncado nunca sale `ok`: un cero limpio sobre datos a medias es peor que no
+   conciliar.
+
+### Cruzarlo
+
+```bash
+cd c4          && npm run informe   -- --nombre <prueba> --desde <ISO>
+cd orquestador && npm run conciliar -- logs/<prueba>__manifiesto.json \
+                                       ../c4/logs/<prueba>__inbox.json
+```
+
+```
+  PERDIDA              13   aceptado y ausente en C4      ← el defecto
+  sin confirmar        19   salió y nadie contestó
+  no emitidos           0   nunca salieron: arnés
+  huecos interiores     1   ⚠ invalidan el orden
+  colas truncadas       1
+  expedientes idos      1
+```
+
+Los contadores de orden **solo miran lo exigible**: un hueco que dejó un 503 se
+ve en el detalle, pero no dispara la métrica grave. Sale con código 1 si hay
+pérdida.
+
+### Probarlo sin AWS
+
+```bash
+npm run e2e:manifiesto
+```
+
+Levanta dos C3 de mentira, corre una corrida de verdad contra ellos y le quita
+eventos al inbox a mano: una cola, un hueco interior y un expediente entero.
+Comprueba que la conciliacion encuentra exactamente esos y ni uno mas — y que
+con el inbox intacto el veredicto sale limpio pese a los 503.
 
 ## Registro de destinos
 
@@ -292,8 +366,11 @@ interesante — omisión coordinada por la puerta de atrás.
 Cada corrida escribe en **los dos lados**, con el mismo identificador:
 
 ```
-orquestador/logs/<prueba>.json        lo que se OFRECIO
-c3/logs/<prueba>__<tenant>.json       lo que se RECIBIO
+orquestador/logs/<prueba>.json               lo que se OFRECIO
+orquestador/logs/<prueba>__manifiesto.json   que (rpf_id, sequence) SALIO
+c3/logs/<prueba>__<tenant>.json              lo que se RECIBIO
+c4/logs/<prueba>__inbox.json                 lo que LLEGO      (npm run informe)
+orquestador/logs/<prueba>__conciliacion.json el veredicto P4   (npm run conciliar)
 ```
 
 El identificador viaja en la cabecera `x-prueba-id` de cada request — en

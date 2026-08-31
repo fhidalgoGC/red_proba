@@ -23,6 +23,19 @@ Diseño del track: [../docs/05-contenedor-c4.md](../docs/05-contenedor-c4.md)
 | `G-05` Detección de huecos | ✅ |
 | `G-06` Marcas de tiempo `e7..e10` | ✅ (+ `e7b`, ver abajo) |
 | `G-07` Manejo de DLQ | ✅ |
+| `G-08` Volcado del inbox para conciliar | ✅ (`npm run informe`) |
+
+**El informe se saca por CLI**, no por HTTP:
+
+```bash
+npm run informe -- --nombre <prueba> --desde <ISO>   # → c4/logs/<prueba>__inbox.json
+```
+
+Ese archivo es la mitad «llegó» de P4; la otra la escribe el orquestador y las
+cruza `npm run conciliar` (ver `orquestador/README.md`). `G-05` por sí solo ve
+únicamente huecos **interiores** — una cola truncada o un expediente perdido
+entero son invisibles desde aquí, porque el rango con el que compara sale de los
+propios datos que llegaron.
 
 **No expone endpoints.** La cola es su única entrada; el Postgres y los logs,
 su única salida. No es un API: es un worker, y por eso arranca con

@@ -155,3 +155,41 @@ resuelva `api-NN.poc.local`.
 
 **El orquestador no se conecta a C4 en absoluto.** Si necesita verificar lo que
 llegó, que lo haga leyendo métricas, no la cola.
+
+### O-08 · Manifiesto de expedientes  ⚠ NUEVO
+
+Al cerrar la corrida, `logs/<prueba>__manifiesto.json`: por cada `rpf_id`, los
+rangos de `sequence` que salieron, en cuatro estados (`aceptados`,
+`rechazados`, `fallidos`, `no_emitidos`).
+
+Es la mitad «salió» de P4. Sin ella, C4 no puede distinguir «el expediente
+terminó ahí» de «se perdió la cola» — ver
+[07-medicion](07-medicion.md#-contar-desde-c4-solo-no-basta).
+
+**Se anota donde el evento sale por el cable**, en `EmisorService`, y no en el
+planificador. Las secuencias se asignan al planificar, con segundos de
+antelación: anotarlas ahí contaría como emitido lo que solo estaba previsto.
+
+**El tope es explícito.** `ORQ_MANIFIESTO_TOPE` (200.000 expedientes por
+defecto). Al alcanzarlo se dejan de admitir expedientes nuevos y el manifiesto
+sale con `truncado: true`, y un manifiesto truncado nunca produce un veredicto
+`ok`: conciliar contra datos a medias y declarar «cero pérdidas» es peor que no
+conciliar.
+
+**Se vuelca al cerrar el informe, no al parar el planificador**: es el único
+instante en que cada evento emitido ya tiene su resolución. Antes, respuestas
+que sí llegaron figurarían como `en_vuelo`.
+
+### O-09 · Conciliación
+
+```bash
+npm run conciliar -- logs/<prueba>__manifiesto.json ../c4/logs/<prueba>__inbox.json
+```
+
+Resta rango a rango y clasifica cada ausencia por culpable: `perdida` (aceptado
+y ausente en C4), `sin_confirmar` (salió y nadie contestó), `arnes` (nunca
+salió). Por forma: hueco interior, cabeza, cola o expediente entero. Sale con
+código 1 si hay pérdida, para poder encadenarlo en un script de corrida.
+
+Es código puro sobre dos archivos JSON: no levanta Nest, no toca la base y
+corre meses después contra los artefactos de una corrida vieja.

@@ -69,6 +69,32 @@ El `sequence` por `rpf_id` permite ver si falta un evento intermedio. Con FIFO
 no debería ocurrir nunca — y por eso vale medirlo: **un solo hueco invalida la
 afirmación de orden** y es un hallazgo mucho más grave que una latencia alta.
 
+⚠ **Esto solo ve huecos INTERIORES**, y esa limitación no se arregla desde aquí:
+el rango con el que compara sale de los propios datos que llegaron, así que una
+cabeza ausente desplaza el `MIN`, una cola ausente desplaza el `MAX` y un
+expediente perdido entero no deja ni fila que agrupar. C4 no puede saber cuántos
+eventos tenía que llevar un expediente. Lo cierra el manifiesto del orquestador
+(O-08) cruzado con G-08.
+
+### G-08 · Volcado del inbox para conciliar
+
+```bash
+npm run informe -- --nombre <prueba> --desde <ISO>
+```
+
+Escribe `c4/logs/<prueba>__inbox.json`: por expediente, los `sequence` que
+llegaron comprimidos en rangos, más los duplicados. **No decide si falta algo**
+—no puede saberlo— solo dice qué tiene, en un formato que el manifiesto pueda
+restar.
+
+Es un CLI y no un endpoint a propósito: la única entrada de C4 es la cola
+(D-03). Abrirle un puerto HTTP para consultar informes le añadiría, en la cuenta
+del operador neutro, una superficie que el diseño no contempla.
+
+⚠ `--desde` corta por `e7_recibido`. La base sobrevive a la corrida: sin corte,
+el volcado arrastra los expedientes de pruebas anteriores y la conciliación los
+reporta como desconocidos por centenares.
+
 ### G-06 · Marcas de tiempo e7..e10
 
 Ver [07-medicion](07-medicion.md). `e10` se estampa **después del COMMIT**, no
