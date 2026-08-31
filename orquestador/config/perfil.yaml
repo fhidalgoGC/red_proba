@@ -1,0 +1,153 @@
+# Perfil de carga. O-01: la forma de la prueba es datos, no codigo.
+# Cambiarla no debe requerir compilar ni desplegar.
+
+# ---------------------------------------------------------------------------
+# modo: smoke | carga
+#
+#   smoke  -> corrida funcional de punta a punta. Un total fijo de eventos
+#             repartidos entre los tenants, con un numero aleatorio de
+#             llamadas por tenant. Sirve para confirmar el camino completo.
+#
+#   carga  -> el perfil de fases de docs/04-orquestador.md. Ritmo sostenido
+#             en eventos/segundo, con Zipf y Poisson. Es la prueba de verdad.
+# ---------------------------------------------------------------------------
+modo: smoke
+
+smoke:
+  eventos_totales: 2500        # el total de la corrida, repartido entre todos
+  llamadas_por_tenant: [10, 15] # rango inclusivo, sorteado por tenant
+  duracion_objetivo: 60s       # en cuanto tiempo se reparten las llamadas
+
+carga:
+  # Ritmo en EVENTOS/SEGUNDO agregados entre todos los tenants.
+  # Toda esta curva vive por encima del limite por defecto de KMS (1.000/s):
+  # sin el aumento de cuota la prueba mide throttling, no arquitectura.
+  fases:
+    - { nombre: warmup,   duracion: 15m, ritmo: 1200 }
+    - { nombre: base,     duracion: 60m, ritmo: 1200 }
+    - { nombre: objetivo, duracion: 45m, ritmo: 2000 }
+    - { nombre: pico,     duracion: 15m, ritmo: 2300 }
+    - { nombre: descenso, duracion: 25m, ritmo: 1500 }
+    - { nombre: valle,    duracion: 20m, ritmo:  900 }
+    - { nombre: pico2,    duracion: 18m, ritmo: 2300 }
+    - { nombre: cierre,   duracion: 30m, ritmo: 1200 }
+
+# ---------------------------------------------------------------------------
+# Reparto entre tenants (O-03)
+# ---------------------------------------------------------------------------
+reparto:
+  # zipf | uniforme. Uniforme reparte parejo y esconde el techo de 300 msg/s
+  # por MessageGroupId; zipf es lo que pasa en produccion.
+  tipo: zipf
+  # Exponente de la ley de potencias. 1.0 = Zipf clasico. Mas alto concentra
+  # mas trafico en el tenant grande.
+  exponente: 1.0
+
+# ---------------------------------------------------------------------------
+# Llegadas (O-04)
+# ---------------------------------------------------------------------------
+llegadas:
+  # poisson | uniforme. Uniforme dispara cada 1/ritmo exacto: trafico de
+  # laboratorio. Poisson produce rafagas, y son las rafagas las que llenan
+  # el outbox.
+  tipo: poisson
+  # Resolucion del reloj del planificador. Mas fino = menos granularidad de
+  # rafaga, mas CPU.
+  tick_ms: 10
+
+# ---------------------------------------------------------------------------
+# Pool de payloads pre-generados
+# ---------------------------------------------------------------------------
+pool:
+  # Cuantas plantillas se generan al arrancar. Generar en caliente a 2.000/s
+  # convierte al orquestador en el cuello de botella; pre-generar lo saca del
+  # camino critico.
+  plantillas: 1000
+  # Semilla del PRNG. Misma semilla -> mismas plantillas. Indispensable para
+  # reproducir un evento cuya firma no verifique.
+  semilla: 20260830
+
+  # Tamaño canonico objetivo, en BYTES. Rango [min, max] inclusivo, sorteado
+  # por plantilla. Un numero suelto (p.ej. `tamano_bytes: 3072`) pide tamaño
+  # fijo, que es el diseño original de docs/02-payload.md.
+  #
+  # ⚠ EL PISO NO ES NEGOCIABLE: el esqueleto del documento fiscal — los ~52
+  # atributos hoja — pesa 1.240 bytes canonicos SIN un solo item, y 1.403 con
+  # el item minimo. Un documento fiscal sin items no existe. Por eso 1 KB es
+  # inalcanzable sin mutilar el documento, y un documento mutilado no compara
+  # con nada. El minimo admisible es 1.411 (1.403 + 8 de relleno reservado).
+  tamano_bytes: [1536, 3072]
+
+  # Items por documento. Rango [min, max]. Se RECORTA solo si no entra en el
+  # tamaño sorteado: una plantilla de 1,5 KB no admite 5 items, y el generador
+  # baja a los que quepan en vez de fallar.
+  items_por_documento: [1, 5]
+  # Cada cuantos eventos se abre un rpf_id nuevo. Con 1, un grupo por evento
+  # y paralelismo maximo en la cola. Con 50, orden estricto por expediente y
+  # te acercas al techo de 300 msg/s por MessageGroupId (D-06).
+  eventos_por_hilo: 1
+  # Verificacion de tamaño. 1.0 = canoniza y mide TODOS los eventos (correcto
+  # pero caro a ritmo alto). 0.01 = uno de cada cien. 0 = solo al construir
+  # el pool.
+  tasa_verificacion: 0.01
+
+# ---------------------------------------------------------------------------
+# Envio (O-05)
+# ---------------------------------------------------------------------------
+envio:
+  ruta: /events
+  # Identificador de la corrida. Viaja en la cabecera x-prueba-id y da nombre
+  # a los archivos de logs/ en LOS DOS lados: orquestador/logs/<id>.jsonl y
+  # c3/logs/<id>__<tenant>.jsonl. Restarlos es lo que responde P4.
+  # `npm run burst -- --id xxt` lo sobreescribe.
+  prueba_id: corrida-local
+  # Eventos por request HTTP.
+  #
+  #   1  -> cada evento es su propia llamada. Cuando a un tenant le tocan 20
+  #         eventos salen 20 requests CONCURRENTES. Es lo que ejercita la
+  #         concurrencia del contenedor del cliente, y es el valor por defecto.
+  #
+  #   20 -> una llamada lleva 20 documentos (~62 KB de cuerpo). Es el diseño
+  #         original de docs/04-orquestador.md: 50 req/s con lotes grandes,
+  #         para que el orquestador nunca sea el cuello de botella. Usalo si a
+  #         ritmo alto el propio orquestador empieza a acusar
+  #         descartados_retraso.
+  eventos_por_request: 1
+  # Cuanto espera como maximo un lote parcial antes de salir igual. Sin esto,
+  # un tenant de la cola larga con ritmo bajo esperaria minutos a llenar su
+  # lote y le meterias latencia artificial a la medicion.
+  espera_maxima_lote_ms: 200
+  # Tope de requests en vuelo por tenant. Es una valvula de seguridad, no un
+  # regulador: si se satura, ESO ES LA SEÑAL (el tenant no da abasto) y se
+  # cuenta aparte, como `descartados_saturacion`, nunca como exito.
+  #
+  # ⚠ DIMENSIONALO CONTRA LA RAFAGA, no contra el ritmo medio. En modo smoke
+  # una llamada dispara sus N eventos DE GOLPE; con eventos_por_request=1 eso
+  # son N requests simultaneas. Con 2.500 eventos, 2 tenants y Zipf, al tenant
+  # grande le tocan rafagas de ~120: un tope de 64 le descartaba un tercio de
+  # la corrida y P4 quedaba sin respuesta. Con 50 tenants las rafagas son de
+  # ~45 y 64 alcanzaria — pero el margen no cuesta nada.
+  # 0 = SIN TOPE, y es lo correcto por defecto.
+  #
+  # ⚠ Un tope de peticiones en vuelo es un LAZO CERRADO: frena el envio segun
+  # lo rapido que conteste el destino, que es justo lo que O-02 prohibe. Con
+  # tope, un destino lento recibe menos carga y la prueba miente.
+  #
+  # Sin tope el daño de un destino saturado aparece donde debe: en la latencia
+  # y en los timeouts, no como eventos que nunca salieron.
+  concurrencia_por_tenant: 0
+  timeout_ms: 5000
+  # Conexiones keep-alive por destino en el pool de undici.
+  #
+  # ⚠ ES UN TECHO DURO DE RITMO: `conexiones / latencia` req/s. Con 32
+  # conexiones contra un destino que tarda 0,8 s no pasaras de 40 req/s
+  # aunque pidas 200 — el resto se descarta por saturacion, y el informe
+  # parece acusar al destino cuando el cuello es el emisor.
+  #
+  # Por eso `connections` en el batch sigue a `concurrency` por defecto: dos
+  # topes distintos para lo mismo solo sirven para que uno cape al otro en
+  # silencio. Este valor es el del perfil del YAML.
+  conexiones_por_destino: 256
+  # El orquestador NO reintenta. Un reintento falsea la carga ofrecida:
+  # estarias contando el mismo evento dos veces como oferta.
+  reintentos: 0

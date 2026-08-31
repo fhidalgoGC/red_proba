@@ -1,0 +1,243 @@
+# 07 — Medición
+
+Todo lo demás existe para producir cuatro números.
+
+| | Pregunta | Se responde con |
+|---|---|---|
+| **P1** | ¿Cuánto tarda un documento? | Percentiles de los tres agregados |
+| **P2** | ¿A qué ritmo procesa? | Eventos/s sostenidos, no de pico |
+| **P3** | ¿Dónde está el límite? | El ritmo donde el outbox deja de vaciarse |
+| **P4** | ¿Llegaron todos? | Ecuación de conciliación |
+
+## Alcance
+
+La medición **arranca cuando el payload está listo** y **termina cuando el
+evento queda persistido en el Postgres de C4**.
+
+El orquestador, el API y el generador quedan **fuera**: son el arnés de la
+prueba, no el sistema que se evalúa.
+
+## Las marcas
+
+```
+      ── C3 ──────────────────────────────┤ COLA ├── C4 ───────────
+  e0    e1    e2    e3    e4    e5    e6    e7    e8    e9    e10
+  │     │     │     │     │     │     │     │     │     │     │
+listo  JCS  firma cifra commit relay  SQS  c4 rx desc. verif. COMMIT
+```
+
+| Marca | Instante | Dónde se guarda |
+|---|---|---|
+| `e0` | payload generado, entra al mapper | outbox (C3) |
+| `e1` | canonizado | outbox |
+| `e2` | KMS `Sign` devuelve | outbox |
+| `e3` | cifrado | outbox |
+| `e4` | COMMIT de la transacción de negocio | outbox |
+| `e5` | el relay reclama la fila | outbox |
+| `e6` | SQS confirma | outbox |
+| `e7` | C4 recibe el mensaje | inbox (C4) |
+| `e8` | descifrado | inbox |
+| `e9` | firma verificada | inbox |
+| `e10` | **COMMIT** en Postgres de C4 | inbox |
+
+## Etapas y agregados
+
+**Por etapa** (para saber qué arreglar):
+
+| Intervalo | Etapa | Tipo |
+|---|---|---|
+| e0→e1 | Canonicalización | trabajo |
+| e1→e2 | **Firma (KMS)** | ⚠ el sospechoso |
+| e2→e3 | Cifrado | trabajo |
+| e3→e4 | Commit del outbox | trabajo |
+| e4→e5 | **Espera en outbox** | ⚠ saturación |
+| e5→e6 | Publicación a SQS | trabajo |
+| e6→e7 | **Tiempo en cola** | ⚠ saturación |
+| e7→e8 | Descifrado | trabajo |
+| e8→e9 | Verificación de firma | trabajo |
+| e9→e10 | Persistencia en Postgres | trabajo |
+
+**Agregados** (lo que se reporta):
+
+| Agregado | Rango |
+|---|---|
+| **C3 completo** | e0 → e6 |
+| **Tiempo en cola** | e6 → e7 |
+| **C4 completo** | e7 → e10 |
+| **Extremo a extremo** | e0 → e10 |
+
+> Un solo número total no dice nada accionable; diez números sin agregar no se
+> pueden comunicar. Por eso ambos niveles.
+
+## La distinción que importa: trabajo vs espera
+
+Canonizar, firmar, cifrar, descifrar y persistir son **trabajo**: tardan lo que
+tardan y no crecen solos.
+
+La espera en outbox y el tiempo en cola son **espera**: crecen sin techo cuando
+el ritmo de llegada supera al de drenado.
+
+**Si el total se dispara pero las etapas de trabajo siguen planas, el sistema no
+se volvió lento: se llenó.**
+
+El **tiempo en cola** (e6→e7) es el único intervalo que no pertenece a ningún
+contenedor. Mezcla latencia propia de SQS con retraso del consumidor; se separan
+comparándolo contra `ApproximateAgeOfOldestMessage`, que SQS publica gratis: si
+esa métrica crece hay respaldo, si no es solo tránsito.
+
+## Reglas de instrumentación
+
+### M-01 · Dos tablas, unidas por `payload_hash`  ⚠ CRÍTICO
+
+`e0..e6` en columnas de la fila del outbox. `e7..e10` en el inbox de C4.
+
+**Nunca dentro del payload**: va firmado, y meterle metadatos de medición
+cambiaría lo que se firma.
+
+Las dos mitades se juntan al final con el `payload_hash`, que viaja en claro como
+atributo del mensaje. Ahí está la ventaja de haberlo hecho explícito en D-11:
+además de deduplicar, es la llave que hace posible medir extremo a extremo.
+
+### M-02 · Guardar muestras crudas, no promedios  ⚠ CRÍTICO
+
+**Los percentiles no se promedian.** Si cada uno de los 50 contenedores reporta
+su p99, no existe operación que combine esos 50 números en el p99 del sistema —
+el resultado no significa nada.
+
+Conservar las muestras, o histogramas con los mismos buckets, y calcular sobre
+el conjunto completo.
+
+### M-03 · Para una PoC, la base de datos ES el almacén de métricas
+
+No montes un stack de observabilidad para una ventana de 8 horas. Ya tienes las
+tablas. Al terminar la carga, exportas ambas a S3 y calculas todo con SQL.
+
+Dato completo, sin muestreo, y lo puedes rebanar de formas que no anticipaste.
+Un millón de filas con doce columnas de tiempo son unos cientos de MB.
+
+### M-04 · Medir no debe perturbar lo medido
+
+Escribir una métrica a CloudWatch por evento añadiría una llamada de red por
+evento — al ritmo objetivo duplicarías el tráfico saliente. Todo se agrega en
+memoria y se descarga cada 10–30 segundos.
+
+### M-05 · Señales en vivo: pocas y sin cardinalidad
+
+Durante la corrida solo necesitas saber si seguir o parar. Cuatro series:
+
+1. Profundidad total del outbox
+2. Edad del mensaje más viejo en la cola (métrica nativa de SQS, gratis)
+3. Ritmo ofrecido (del `/status` del orquestador)
+4. Ritmo aceptado (idem)
+
+**Sin dimensión por tenant** — multiplica por 50 el costo y no dice nada que
+necesites en el momento.
+
+### M-06 · Reloj común
+
+`e6` lo estampa un contenedor de C3 y `e7` otro de C4, en otra cuenta. La resta
+solo tiene sentido si los relojes están sincronizados. Con el servicio de tiempo
+de AWS la deriva es de microsegundos, pero conviene registrarla al arrancar cada
+tarea: si un intervalo entre hosts sale negativo, ya sabes por qué.
+
+## Definición operativa del límite (P3)
+
+> El sistema está saturado cuando **la profundidad del outbox deja de volver a
+> cero** entre ráfagas.
+
+No es la latencia ni el uso de CPU: es que la cola de pendientes ya no se vacía.
+
+**Procedimiento**: subir el ritmo por escalones y anotar el último en el que el
+outbox todavía se drenaba. **Ese número es el resultado de la prueba.**
+
+**Cuál componente se satura primero** lo dice cuál intervalo ⚠ crece antes:
+
+| Crece | Significa |
+|---|---|
+| Espera en outbox | El relay no da abasto, o SQS está limitando |
+| Tiempo en cola | El consumidor de C4 es el lento |
+| Intervalo de firma | No es saturación de cola: es throttling de KMS. Confirmar con la tasa de `ThrottlingException`. |
+
+## Conciliación (P4)
+
+```
+emitidos = únicos en C4 + en vuelo + fallidos
+```
+
+Cualquier residuo es **pérdida** y hay que explicarlo.
+
+⚠ **La trampa**: la entrega es al-menos-una-vez, así que C4 puede contar **más**
+de lo emitido. Por eso se cuentan únicos por `payload_hash` y los duplicados se
+reportan aparte.
+
+> Un duplicado es salud del sistema. Una pérdida es un defecto.
+
+**Huecos** son otra cosa: el `sequence` por `rpf_id` detecta si falta un evento
+intermedio. Con FIFO no debería ocurrir nunca, y por eso vale medirlo — un solo
+hueco invalida la afirmación de orden.
+
+## Esquema y consultas
+
+```sql
+-- Outbox de cada tenant (C3): tramo e0..e6
+ALTER TABLE outbox
+  ADD COLUMN e0_listo       TIMESTAMPTZ,
+  ADD COLUMN e1_canonizado  TIMESTAMPTZ,
+  ADD COLUMN e2_firmado     TIMESTAMPTZ,
+  ADD COLUMN e3_cifrado     TIMESTAMPTZ,
+  ADD COLUMN e4_commit      TIMESTAMPTZ,
+  ADD COLUMN e5_reclamado   TIMESTAMPTZ,
+  ADD COLUMN e6_publicado   TIMESTAMPTZ;
+
+-- Inbox de C4: tramo e7..e10
+ALTER TABLE inbox
+  ADD COLUMN e7_recibido    TIMESTAMPTZ,
+  ADD COLUMN e8_descifrado  TIMESTAMPTZ,
+  ADD COLUMN e9_verificado  TIMESTAMPTZ,
+  ADD COLUMN e10_persistido TIMESTAMPTZ,   -- después del COMMIT
+  ADD COLUMN duplicado      BOOLEAN NOT NULL DEFAULT false;
+```
+
+```sql
+-- Los tres agregados y las dos etapas que diagnostican.
+-- Percentiles sobre el conjunto completo, nunca promediando los de cada contenedor.
+SELECT
+  date_trunc('minute', o.e0_listo)                                             AS minuto,
+  count(*)                                                                     AS eventos,
+
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY o.e6_publicado   - o.e0_listo)     AS p99_c3,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY i.e7_recibido    - o.e6_publicado) AS p99_cola,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY i.e10_persistido - i.e7_recibido)  AS p99_c4,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY i.e10_persistido - o.e0_listo)     AS p99_total,
+
+  -- trabajo vs espera: si p99_total sube y estos no, se llenó
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY o.e2_firmado   - o.e1_canonizado)  AS p99_firma,
+  percentile_disc(0.99) WITHIN GROUP (ORDER BY o.e5_reclamado - o.e4_commit)      AS p99_espera_outbox
+
+FROM outbox o
+JOIN inbox  i USING (payload_hash)      -- la unión que hace posible el extremo a extremo
+WHERE NOT i.duplicado
+GROUP BY 1 ORDER BY 1;
+```
+
+```sql
+-- Conciliación
+SELECT
+  (SELECT count(*) FROM outbox)                              AS emitidos,
+  (SELECT count(*) FROM inbox WHERE NOT duplicado)           AS unicos_c4,
+  (SELECT count(*) FROM inbox WHERE duplicado)               AS duplicados,
+  (SELECT count(*) FROM outbox WHERE status = 'PENDING')     AS en_vuelo,
+  (SELECT count(*) FROM outbox WHERE status = 'FAILED')      AS fallidos;
+-- emitidos - unicos_c4 - en_vuelo - fallidos  DEBE dar 0
+```
+
+```sql
+-- Huecos por expediente
+SELECT rpf_id, sequence + 1 AS falta
+  FROM inbox i
+ WHERE NOT duplicado
+   AND NOT EXISTS (
+     SELECT 1 FROM inbox n
+      WHERE n.rpf_id = i.rpf_id AND n.sequence = i.sequence + 1)
+   AND sequence < (SELECT max(sequence) FROM inbox m WHERE m.rpf_id = i.rpf_id);
+```

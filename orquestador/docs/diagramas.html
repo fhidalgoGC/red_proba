@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Reset minimo — el mismo que aplica el visor de artefactos. */
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+</style>
+<title>El orquestador, por dentro</title>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf; --rule-fine:#dde1db;
+    --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    /* azul = lo determinista, lo que el reloj manda · ámbar = lo que vuelve del destino */
+    --det:#0f5fa0; --det-soft:#0f5fa01f;
+    --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 34rem; --wide: 64rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438; --rule-fine:#232b2f;
+      --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+      --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+      --nada:#8f9aa1; --alarma:#e2705c; }
+  }
+  :root[data-theme="dark"] { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438;
+    --rule-fine:#232b2f; --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+    --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+    --nada:#8f9aa1; --alarma:#e2705c; }
+  :root[data-theme="light"] { --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf;
+    --rule-fine:#dde1db; --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    --det:#0f5fa0; --det-soft:#0f5fa01f; --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c; }
+
+  body { background: var(--ground); color: var(--ink); font-family: var(--serif);
+         font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .hoja { max-width: var(--wide); margin: 0 auto; padding: 3.5rem 1.5rem 6rem;
+          display: flex; flex-direction: column; gap: 2.5rem; }
+  .prosa { max-width: var(--measure); }
+  .prosa > * + * { margin-top: 1rem; }
+
+  h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; }
+  h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.02em; }
+  h2 { font-size: 1.55rem; letter-spacing: -0.01em; }
+  p { margin: 0; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+  p code, li code, td code, figcaption code { background: var(--panel); padding: 0.08em 0.34em; border-radius: 3px; }
+
+  .eyebrow { font-family: var(--sans); font-size: 0.7rem; font-weight: 600;
+             letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .paso { font-family: var(--mono); font-size: 0.78rem; color: var(--det);
+          letter-spacing: 0.06em; font-weight: 600; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 2rem; }
+  header .standfirst { max-width: var(--measure); margin-top: 1rem; font-size: 1.08rem; color: var(--ink-2); }
+
+  section { display: flex; flex-direction: column; gap: 1.3rem; }
+  hr.sep { border: 0; border-top: 1px solid var(--rule); margin: 0.75rem 0 0; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lienzo { overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; }
+  figcaption { font-family: var(--sans); font-size: 0.78rem; color: var(--ink-2);
+               line-height: 1.55; max-width: 64ch; }
+
+  .tabla-envoltorio { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.45rem 0.85rem 0.45rem 0;
+           border-bottom: 1px solid var(--rule-fine); vertical-align: top; }
+  th { font-family: var(--sans); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  pre { background: var(--raised); border: 1px solid var(--rule); border-left: 2px solid var(--det);
+        border-radius: 3px; padding: 0.8rem 1rem; overflow-x: auto;
+        font-family: var(--mono); font-size: 0.78rem; line-height: 1.58; }
+  pre .c { color: var(--ink-3); }
+  pre .k { color: var(--det); }
+  pre .s { color: var(--ident); }
+
+  .nota { border-left: 2px solid var(--ident); background: var(--ident-soft);
+          border-radius: 0 3px 3px 0; padding: 0.75rem 1rem; max-width: 46rem;
+          font-size: 0.95rem; }
+  .nota b { color: var(--ident); }
+
+  .cifras { display: flex; flex-wrap: wrap; gap: 0.4rem 2.2rem; }
+  .cifra { display: flex; flex-direction: column; gap: 0.1rem; }
+  .cifra .v { font-family: var(--mono); font-size: 1.25rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .cifra .k { font-family: var(--sans); font-size: 0.67rem; letter-spacing: 0.08em;
+              text-transform: uppercase; color: var(--ink-3); }
+
+  .leyenda { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+             font-family: var(--sans); font-size: 0.77rem; color: var(--ink-2); }
+  .leyenda span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .leyenda i { width: 0.75rem; height: 0.75rem; border-radius: 2px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 1.4rem; font-family: var(--sans);
+           font-size: 0.78rem; color: var(--ink-3); max-width: 62ch; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="hoja">
+
+  <header>
+    <div class="eyebrow">PoC RPF Proof Ledger · track O</div>
+    <h1>El orquestador, por dentro</h1>
+    <p class="standfirst">
+      Qué hace exactamente, en qué orden, y dónde se decide cada cosa. Seguimos
+      un evento desde que llega el <code>POST</code> hasta que su latencia
+      aparece en el informe.
+    </p>
+  </header>
+
+  <!-- ================================================================ -->
+  <section>
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 250" role="img" width="900" style="min-width:680px"
+             aria-label="Las seis etapas: pool al arrancar, plan, materialización, disparo, envío y contabilidad">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+            <!-- 1 pool -->
+            <rect x="14" y="56" width="120" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="74" y="46" text-anchor="middle" fill="var(--det)" font-size="10" font-weight="600">1 · AL ARRANCAR</text>
+            <text x="74" y="82" text-anchor="middle" fill="currentColor" font-size="12" font-weight="600">pool</text>
+            <text x="74" y="99" text-anchor="middle" fill="var(--ink-3)" font-size="10">1000 plantillas</text>
+            <text x="74" y="114" text-anchor="middle" fill="var(--ink-3)" font-size="10">40 ms</text>
+
+            <line x1="134" y1="91" x2="176" y2="91" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+
+            <!-- 2 plan -->
+            <rect x="184" y="56" width="120" height="70" rx="4" fill="none" stroke="var(--det)" stroke-width="2"/>
+            <text x="244" y="46" text-anchor="middle" fill="var(--det)" font-size="10" font-weight="600">2 · POST /batch</text>
+            <text x="244" y="82" text-anchor="middle" fill="var(--det)" font-size="12" font-weight="600">plan</text>
+            <text x="244" y="99" text-anchor="middle" fill="var(--ink-3)" font-size="10">cuota · instantes</text>
+            <text x="244" y="114" text-anchor="middle" fill="var(--ink-3)" font-size="10">índices</text>
+
+            <line x1="304" y1="91" x2="346" y2="91" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+
+            <!-- 3 materializar -->
+            <rect x="354" y="56" width="120" height="70" rx="4" fill="none" stroke="var(--ident)" stroke-width="2"/>
+            <text x="414" y="46" text-anchor="middle" fill="var(--ident)" font-size="10" font-weight="600">3 · 5 s ANTES</text>
+            <text x="414" y="82" text-anchor="middle" fill="var(--ident)" font-size="12" font-weight="600">materializar</text>
+            <text x="414" y="99" text-anchor="middle" fill="var(--ink-3)" font-size="10">índice →</text>
+            <text x="414" y="114" text-anchor="middle" fill="var(--ink-3)" font-size="10">documento</text>
+
+            <line x1="474" y1="91" x2="516" y2="91" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+
+            <!-- 4 disparo -->
+            <rect x="524" y="56" width="120" height="70" rx="4" fill="none" stroke="var(--det)" stroke-width="2"/>
+            <text x="584" y="46" text-anchor="middle" fill="var(--det)" font-size="10" font-weight="600">4 · TICK 10 ms</text>
+            <text x="584" y="82" text-anchor="middle" fill="var(--det)" font-size="12" font-weight="600">disparo</text>
+            <text x="584" y="99" text-anchor="middle" fill="var(--ink-3)" font-size="10">lo que vence</text>
+            <text x="584" y="114" text-anchor="middle" fill="var(--ink-3)" font-size="10">sin await</text>
+
+            <line x1="644" y1="91" x2="686" y2="91" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+
+            <!-- 5 C3 -->
+            <rect x="694" y="56" width="120" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="754" y="46" text-anchor="middle" fill="currentColor" font-size="10" font-weight="600">5 · RED</text>
+            <text x="754" y="82" text-anchor="middle" fill="currentColor" font-size="12" font-weight="600">C3</text>
+            <text x="754" y="99" text-anchor="middle" fill="var(--ink-3)" font-size="10">responde</text>
+            <text x="754" y="114" text-anchor="middle" fill="var(--ink-3)" font-size="10">cuando puede</text>
+
+            <!-- contabilidad -->
+            <line x1="584" y1="130" x2="584" y2="166" stroke="var(--det)" stroke-width="1.5" marker-end="url(#a1)" color="var(--det)"/>
+            <text x="592" y="152" fill="var(--det)" font-size="10.5">sent · aquí</text>
+
+            <path d="M754,130 L754,182 L600,182" fill="none" stroke="var(--ident)" stroke-width="1.5"/>
+            <text x="608" y="200" fill="var(--ident)" font-size="10.5">completed · cuando vuelve</text>
+
+            <rect x="184" y="200" width="460" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="414" y="222" text-anchor="middle" fill="currentColor" font-size="11.5">
+              6 · logs/&lt;prueba&gt;.json — segundo a segundo, por tenant
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Las seis etapas. Lo caro —construir plantillas y construir cuerpos—
+        ocurre <em>fuera</em> del momento de disparar: el tick solo coge lo que
+        ya está hecho. Y las dos anotaciones caen en instantes distintos, que es
+        de donde sale la latencia.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">ETAPA 1 · AL ARRANCAR EL CONTENEDOR</div>
+      <h2>Mil plantillas, una vez</h2>
+      <p>
+        Un documento fiscal cuesta construir ~52 atributos, hacer aritmética en
+        centavos y canonizar dos veces para ajustar el relleno. A 3.000 eventos
+        por segundo eso convertiría al orquestador en el cuello de botella, y la
+        prueba mediría al generador en vez de a la arquitectura.
+      </p>
+      <p>
+        Así que se pagan una vez, al arrancar: <strong>1.000 plantillas en
+        40 ms</strong>, 2,2 MB en memoria.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 240" role="img" width="900" style="min-width:680px"
+             aria-label="Una plantilla se compone de esqueleto fijo, ítems variables y relleno que la lleva al tamaño exacto sorteado">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+            <text x="14" y="26" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              se sortea un tamaño objetivo en [1536, 3072] y el relleno cuadra la diferencia
+            </text>
+
+            <!-- barra 1 -->
+            <text x="14" y="60" fill="var(--ink-3)" font-size="10">1600 B</text>
+            <rect x="72" y="46" width="252" height="22" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="198" y="61" text-anchor="middle" fill="var(--det)" font-size="10">esqueleto · 1270 B</text>
+            <rect x="324" y="46" width="34" height="22" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="341" y="61" text-anchor="middle" fill="currentColor" font-size="9">1 ít.</text>
+            <rect x="358" y="46" width="10" height="22" fill="var(--nada)" fill-opacity="0.35" stroke="var(--nada)" stroke-width="1"/>
+
+            <!-- barra 2 -->
+            <text x="14" y="98" fill="var(--ink-3)" font-size="10">2296 B</text>
+            <rect x="72" y="84" width="252" height="22" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="198" y="99" text-anchor="middle" fill="var(--det)" font-size="10">esqueleto · 1270 B</text>
+            <rect x="324" y="84" width="34" height="22" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="341" y="99" text-anchor="middle" fill="currentColor" font-size="9">1 ít.</text>
+            <rect x="358" y="84" width="152" height="22" fill="var(--nada)" fill-opacity="0.35" stroke="var(--nada)" stroke-width="1"/>
+            <text x="434" y="99" text-anchor="middle" fill="currentColor" font-size="10">relleno base64</text>
+
+            <!-- barra 3 -->
+            <text x="14" y="136" fill="var(--ink-3)" font-size="10">3046 B</text>
+            <rect x="72" y="122" width="252" height="22" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="198" y="137" text-anchor="middle" fill="var(--det)" font-size="10">esqueleto · 1270 B</text>
+            <rect x="324" y="122" width="170" height="22" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="409" y="137" text-anchor="middle" fill="currentColor" font-size="10">5 ítems · 164 B c/u</text>
+            <rect x="494" y="122" width="126" height="22" fill="var(--nada)" fill-opacity="0.35" stroke="var(--nada)" stroke-width="1"/>
+            <text x="557" y="137" text-anchor="middle" fill="currentColor" font-size="10">relleno</text>
+
+            <!-- piso -->
+            <line x1="324" y1="38" x2="324" y2="158" stroke="var(--alarma)" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <text x="332" y="174" fill="var(--alarma)" font-size="10.5">1270 B = el esqueleto sin un solo ítem</text>
+            <text x="332" y="190" fill="var(--alarma)" font-size="10.5">1433 B con el ítem mínimo — por eso 1 KB es imposible</text>
+
+            <!-- leyenda derecha -->
+            <text x="660" y="60" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="10.5">El relleno usa alfabeto base64:</text>
+            <text x="660" y="76" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">1 carácter = 1 byte, y ninguno</text>
+            <text x="660" y="92" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">necesita escape en JSON.</text>
+            <text x="660" y="122" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="10.5">Con bytes crudos, una comilla</text>
+            <text x="660" y="138" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">se escaparía al serializar y el</text>
+            <text x="660" y="154" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">tamaño no cuadraría.</text>
+
+            <text x="14" y="220" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Medido sobre 2.000 plantillas: todas pesan EXACTAMENTE el tamaño que se les sorteó.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El tamaño se mide sobre la forma <strong>canónica</strong> (JCS RFC 8785)
+        y en <strong>bytes</strong>, nunca en caracteres — un acento son dos
+        bytes. El mismo canonicalizador tendrá que usar C3 para firmar: si
+        divergen, ni el tamaño cuadra ni la firma verifica.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">ETAPA 2 · AL RECIBIR EL POST</div>
+      <h2>El plan de toda la corrida</h2>
+      <p>
+        Antes de que salga un solo evento se decide <em>toda</em> la
+        aleatoriedad: cuántos por segundo, en qué instante exacto, y con qué
+        documento. En la corrida de ejemplo, 4.200 eventos planificados en
+        <strong>5 ms</strong>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 300" role="img" width="900" style="min-width:680px"
+             aria-label="Cada segundo recibe una cuota sorteada dentro del rango y sus instantes se reparten dentro del segundo">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--det)"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+            <!-- entrada -->
+            <rect x="14" y="24" width="250" height="60" rx="4" fill="none" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="139" y="46" text-anchor="middle" fill="var(--det)" font-size="11" font-weight="600">del POST</text>
+            <text x="139" y="66" text-anchor="middle" fill="currentColor" font-size="11">request.client = {100, 200}</text>
+
+            <line x1="139" y1="84" x2="139" y2="112" stroke="var(--det)" stroke-width="1.6" marker-end="url(#a2)"/>
+
+            <!-- cuota -->
+            <text x="14" y="132" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              a · UN ENTERO POR SEGUNDO, dentro del rango
+            </text>
+            <text x="14" y="152" fill="currentColor" font-size="11">N = ⌊min + azar × (max − min + 1)⌋</text>
+
+            <g font-size="11">
+              <rect x="14"  y="164" width="58" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.3"/>
+              <text x="43" y="186" text-anchor="middle" fill="var(--det)">142</text>
+              <rect x="78"  y="164" width="58" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.3"/>
+              <text x="107" y="186" text-anchor="middle" fill="var(--det)">188</text>
+              <rect x="142" y="164" width="58" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.3"/>
+              <text x="171" y="186" text-anchor="middle" fill="var(--det)">123</text>
+              <rect x="206" y="164" width="58" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.3"/>
+              <text x="235" y="186" text-anchor="middle" fill="var(--det)">144</text>
+              <rect x="270" y="164" width="58" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.3"/>
+              <text x="299" y="186" text-anchor="middle" fill="var(--det)">192</text>
+              <text x="344" y="186" fill="var(--ink-3)" font-size="13">· · ·</text>
+            </g>
+            <text x="14" y="216" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              seg 1        seg 2        seg 3        seg 4        seg 5
+            </text>
+
+            <!-- instantes -->
+            <text x="440" y="132" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              b · LOS N INSTANTES, dentro de ese segundo
+            </text>
+            <text x="440" y="152" fill="currentColor" font-size="11">N posiciones al azar, ordenadas</text>
+
+            <line x1="440" y1="186" x2="874" y2="186" stroke="var(--rule)" stroke-width="1.5"/>
+            <g stroke="var(--det)" stroke-width="1.4">
+              <line x1="448" y1="166" x2="448" y2="186"/><line x1="458" y1="166" x2="458" y2="186"/>
+              <line x1="464" y1="166" x2="464" y2="186"/><line x1="502" y1="166" x2="502" y2="186"/>
+              <line x1="520" y1="166" x2="520" y2="186"/><line x1="528" y1="166" x2="528" y2="186"/>
+              <line x1="534" y1="166" x2="534" y2="186"/><line x1="542" y1="166" x2="542" y2="186"/>
+              <line x1="596" y1="166" x2="596" y2="186"/><line x1="624" y1="166" x2="624" y2="186"/>
+              <line x1="632" y1="166" x2="632" y2="186"/><line x1="678" y1="166" x2="678" y2="186"/>
+              <line x1="692" y1="166" x2="692" y2="186"/><line x1="700" y1="166" x2="700" y2="186"/>
+              <line x1="706" y1="166" x2="706" y2="186"/><line x1="742" y1="166" x2="742" y2="186"/>
+              <line x1="790" y1="166" x2="790" y2="186"/><line x1="806" y1="166" x2="806" y2="186"/>
+              <line x1="814" y1="166" x2="814" y2="186"/><line x1="840" y1="166" x2="840" y2="186"/>
+            </g>
+            <text x="440" y="204" fill="var(--ink-3)" font-size="10">0 ms</text>
+            <text x="874" y="204" text-anchor="end" fill="var(--ink-3)" font-size="10">990 ms</text>
+            <text x="440" y="222" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              racimos y huecos — es lo que llena el outbox
+            </text>
+
+            <!-- por que 990 -->
+            <line x1="860" y1="158" x2="860" y2="212" stroke="var(--alarma)" stroke-width="1.4" stroke-dasharray="4 3"/>
+            <text x="700" y="246" fill="var(--alarma)" font-size="10.5">nada se programa en el último tick:</text>
+            <text x="700" y="262" fill="var(--alarma)" font-size="10.5">sin un tick por delante, no saldría</text>
+
+            <!-- documento -->
+            <text x="14" y="252" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              c · Y QUÉ DOCUMENTO, por índice
+            </text>
+            <text x="14" y="272" fill="currentColor" font-size="11">idx = ⌊azar × 1000⌋ → [ 417, 92, 806, 233, … ]</text>
+            <text x="14" y="290" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              un índice pesa 4 bytes; un documento, 2 KB
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Los tres sorteos usan flujos de PRNG separados. El plan guarda
+        <strong>índices</strong>, no cuerpos: una corrida de 3,5 h son 25
+        millones de eventos, que caben como enteros pero no como documentos.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>La cuota es exacta, no una media.</b> Antes esto sorteaba intervalos
+      exponenciales con media λ — un proceso de Poisson de verdad, pero cuyo
+      conteo por segundo es una variable aleatoria con desviación √λ. Con un
+      máximo de 80 salían segundos de 94. Ahora se sortea el conteo y se
+      reparten sus instantes: por la <em>propiedad de uniformidad
+      condicional</em>, un Poisson del que se conocen sus N llegadas las tiene
+      distribuidas uniformemente — así que los racimos son los mismos y el
+      número está garantizado.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <h2>Los cuatro dados</h2>
+      <p>
+        Todo lo determinista sale de mulberry32 sembrado. Cuatro flujos
+        independientes, derivados de la misma semilla por XOR.
+      </p>
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead>
+          <tr><th>Flujo</th><th>Decide</th><th>Cuándo</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="n">semilla</td><td>ítems, importes, CNPJ, tamaño de cada plantilla</td><td>al arrancar</td></tr>
+          <tr><td class="n">^ 0x85ebca6b</td><td>la cuota de cada segundo</td><td>al planificar</td></tr>
+          <tr><td class="n">^ 0x9e3779b9</td><td>los instantes dentro del segundo</td><td>al planificar</td></tr>
+          <tr><td class="n">^ 0x5f3759df</td><td>qué plantilla le toca a cada evento</td><td>al planificar</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prosa">
+      <p>
+        Separados a propósito: si compartieran uno, cambiar el rango de
+        <code>request</code> desplazaría también la elección de plantillas, y dos
+        corridas con la misma semilla dejarían de ser comparables.
+      </p>
+      <p>
+        Dos cosas quedan deliberadamente fuera del PRNG. El <strong>relleno</strong>
+        usa <code>randomBytes</code> porque su contenido no se firma, solo importa
+        su largo. Y la <strong>identidad</strong> usa <code>randomUUID</code>,
+        que es lo que hace único el <code>payload_hash</code>.
+      </p>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">ETAPA 3 · CINCO SEGUNDOS ANTES DE QUE TOQUE</div>
+      <h2>De índice a documento</h2>
+      <p>
+        Materializar es coger la plantilla y refrescarle la identidad. Se hace
+        con cinco segundos de ventaja, en el tiempo muerto entre ticks, para que
+        disparar no tenga que construir nada.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 270" role="img" width="900" style="min-width:680px"
+             aria-label="Los campos de identidad se refrescan; solo sequence cambia de largo y el relleno lo compensa">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ident)"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <text x="14" y="26" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">plantilla 417 del pool</text>
+            <text x="500" y="26" fill="var(--ident)" font-family="ui-sans-serif,system-ui" font-size="11">documento a enviar</text>
+
+            <!-- campos refrescados -->
+            <rect x="14" y="38" width="340" height="122" rx="3" fill="none" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="26" y="58" fill="var(--ident)" font-size="10.5" font-weight="600">SE REFRESCAN</text>
+            <text x="26" y="78"  fill="currentColor">rpf_id       UUID · 36</text>
+            <text x="26" y="96"  fill="currentColor">event_id     UUID · 36</text>
+            <text x="26" y="114" fill="currentColor">occurred_at  ISO  · 24</text>
+            <text x="26" y="132" fill="currentColor">party_id     hmac · 69</text>
+            <text x="26" y="150" fill="var(--alarma)">sequence     entero · VARIABLE</text>
+
+            <!-- resto -->
+            <rect x="14" y="172" width="340" height="52" rx="3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <text x="26" y="192" fill="var(--ink-3)" font-size="10.5" font-weight="600">SE REUSA TAL CUAL</text>
+            <text x="26" y="212" fill="var(--ink-3)">participant · document · totals · items · transport …</text>
+
+            <line x1="360" y1="130" x2="470" y2="130" stroke="var(--ident)" stroke-width="1.8" marker-end="url(#a3)"/>
+
+            <!-- resultado -->
+            <rect x="486" y="60" width="398" height="76" rx="3" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="500" y="84" fill="currentColor">event_id: "7c835362-6e01-42d7-8259-22f4517e0c96"</text>
+            <text x="500" y="104" fill="currentColor">sequence: 1  →  padding recortado 0 bytes</text>
+            <text x="500" y="124" fill="var(--ident)" font-weight="600">2296 bytes canónicos · exactos</text>
+
+            <!-- el delta -->
+            <text x="486" y="168" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              El único que mueve el tamaño es sequence
+            </text>
+            <text x="486" y="188" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              De 9 a 10 el documento crece un byte, así que se recorta un byte
+            </text>
+            <text x="486" y="204" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              de relleno. Es O(1): no hace falta volver a canonizar.
+            </text>
+            <text x="486" y="228" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Cada plantilla reserva 8 bytes para que sequence pueda llegar
+            </text>
+            <text x="486" y="244" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              a nueve dígitos sin quedarse sin de dónde recortar.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Refrescar la identidad no es cosmético: el <code>MessageDeduplicationId</code>
+        es el sha256 del payload canónico en claro. Reenviar una plantilla tal
+        cual produciría el mismo <code>payload_hash</code> y SQS FIFO descartaría el
+        duplicado <strong>en silencio</strong> durante cinco minutos.
+      </figcaption>
+    </figure>
+
+    <div class="prosa">
+      <p>
+        Comprobado interceptando 29 cuerpos en el cable: <strong>28 plantillas
+        distintas y 29 <code>event_id</code> únicos</strong>. El contenido caro
+        se reutiliza; la identidad, nunca.
+      </p>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">LO QUE EL ORQUESTADOR <em>NO</em> HACE</div>
+      <h2>El hueco de 64 ceros</h2>
+      <p>
+        <strong>El orquestador no hashea ni firma nada.</strong> Cero
+        <code>createHash</code>, cero HMAC. Lo único que hace en todo este
+        asunto es mandar un <em>hueco</em> del largo correcto para que C3
+        escriba su HMAC encima:
+      </p>
+      <pre><span class="k">export const</span> PARTY_ID_PLACEHOLDER = <span class="s">'hmac:'</span> + <span class="s">'0'</span>.repeat(<span class="s">64</span>);
+<span class="c">// 64 ceros. No es un hash: es relleno con el largo correcto.</span></pre>
+      <p>
+        Se explica aquí porque el largo de ese hueco es lo único que ata al
+        orquestador con la criptografía de C3 — si no coincidiera, el ajuste de
+        tamaño al byte que hace el pool dejaría de valer. El resto del paso ②
+        ocurre en C3 y se detalla en
+        <code>docs/09-party-id-y-payload-hash.md</code>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 330" role="img" width="900" style="min-width:680px"
+             aria-label="party_id sale de un HMAC del tenant y es un campo del documento; payload_hash sale de hashear el documento entero y vive fuera de él">
+          <defs>
+            <marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ident)"/>
+            </marker>
+            <marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--det)"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <!-- ── party_id: entra al documento ── -->
+            <text x="14" y="24" fill="var(--ident)" font-family="ui-sans-serif,system-ui"
+                  font-size="11" font-weight="600">HMAC-SHA256 · con llave · UNA VEZ AL ARRANCAR C3</text>
+
+            <rect x="14" y="36" width="150" height="44" rx="3" fill="none" stroke="var(--ident)" stroke-width="1.5"/>
+            <text x="89" y="55" text-anchor="middle" fill="currentColor" font-size="10.5">TENANT_ID</text>
+            <text x="89" y="71" text-anchor="middle" fill="var(--ink-3)" font-size="10">"tenant-01"</text>
+
+            <line x1="164" y1="58" x2="206" y2="58" stroke="var(--ident)" stroke-width="1.6" marker-end="url(#a7)"/>
+
+            <rect x="214" y="36" width="170" height="44" rx="3" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.5"/>
+            <text x="299" y="55" text-anchor="middle" fill="var(--ident)" font-size="10.5" font-weight="600">KMS GenerateMac</text>
+            <text x="299" y="71" text-anchor="middle" fill="var(--ink-3)" font-size="10">KMS_HMAC_KEY_ID</text>
+
+            <line x1="384" y1="58" x2="426" y2="58" stroke="var(--ident)" stroke-width="1.6" marker-end="url(#a7)"/>
+
+            <rect x="434" y="36" width="452" height="44" rx="3" fill="none" stroke="var(--ident)" stroke-width="1.5"/>
+            <text x="446" y="55" fill="var(--ident)" font-size="10.5" font-weight="600">party_id · 69 caracteres · ES UN CAMPO DEL DOCUMENTO</text>
+            <text x="446" y="71" fill="currentColor" font-size="10">"hmac:9f2b7c41e8a35d06…60d53a8e14c7b2f9"</text>
+
+            <text x="14" y="100" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              50 tenants = 50 valores, fijos de por vida. La llave vive en el KMS de C3 y no sale nunca: C4 agrupa sin poder identificar.
+            </text>
+
+            <!-- ── el documento ── -->
+            <rect x="14" y="122" width="430" height="128" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="26" y="142" fill="currentColor" font-size="10.5" font-weight="600">EL DOCUMENTO · 16 campos · 3.072 bytes canónicos</text>
+            <text x="26" y="164" fill="var(--ink-3)" font-size="10">rpf_id · event_id · event_type · schema_version</text>
+            <text x="26" y="181" fill="var(--ink-3)" font-size="10">occurred_at · sequence · participant · counterparty</text>
+            <text x="26" y="198" fill="var(--ident)" font-size="10" font-weight="600">party_id  ← aquí dentro</text>
+            <text x="26" y="215" fill="var(--ink-3)" font-size="10">document · totals · items · transport · payment</text>
+            <text x="26" y="232" fill="var(--ink-3)" font-size="10">origin · padding</text>
+
+            <!-- ── payload_hash: sale del documento ── -->
+            <line x1="444" y1="186" x2="500" y2="186" stroke="var(--det)" stroke-width="1.8" marker-end="url(#a8)"/>
+            <text x="452" y="176" fill="var(--det)" font-size="9.5">SHA-256</text>
+
+            <rect x="508" y="150" width="378" height="72" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="520" y="170" fill="var(--det)" font-size="10.5" font-weight="600">payload_hash · 64 hex · NO ES UN CAMPO</text>
+            <text x="520" y="188" fill="currentColor" font-size="10">"3d855c1bbc688a40…4bc15c6c26d8be93"</text>
+            <text x="520" y="210" fill="var(--ink-3)" font-size="10">se calcula SOBRE el documento, vive FUERA de él</text>
+
+            <text x="508" y="242" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Meterlo dentro cambiaría el documento, y al
+            </text>
+            <text x="508" y="258" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              re-hashearlo daría otro valor. Misma razón por la
+            </text>
+            <text x="508" y="274" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              que las marcas e0..e6 tampoco van dentro.
+            </text>
+
+            <!-- ── los tres papeles ── -->
+            <text x="14" y="278" fill="var(--det)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              El payload_hash hace tres trabajos, y por eso es uno solo
+            </text>
+            <text x="14" y="298" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              1 · identifica el documento    2 · es el MessageDeduplicationId de SQS    3 · es la clave primaria del inbox de C4
+            </text>
+            <text x="14" y="318" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              El 3 con el 2 es lo que permite conciliar outbox contra inbox — y esa conciliación es, literalmente, la respuesta a P4.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Todo lo de este diagrama ocurre en <strong>C3</strong>, no aquí. El
+        orquestador solo aporta el hueco de la primera caja.
+        <code>party_id</code> entra al documento; <code>payload_hash</code> sale
+        de él, y por eso no puede estar dentro. El orden importa: la huella se
+        calcula <strong>después</strong> de sustituir el <code>party_id</code>,
+        o correspondería a un documento que nunca viajó.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Por qué el hueco tiene que medir exactamente 69.</b> El orquestador no
+      calcula ningún HMAC —no tiene la llave ni debe tenerla—. Manda
+      <code class="mono">"party_id": "hmac:000…000"</code>, un placeholder de
+      <strong>exactamente 69 caracteres</strong>, y C3 lo sustituye por el suyo.
+      Si los largos no coincidieran, el documento pesaría distinto de lo que su
+      plantilla declara: nada fallaría de forma visible, pero el orquestador
+      reportaría 3.072 bytes ofrecidos y C3 registraría 3.104 recibidos para el
+      mismo evento, y la conciliación de bytes dejaría de cerrar.
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead>
+          <tr><th></th><th>party_id</th><th>payload_hash</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Responde a</td><td>quién emitió</td><td>qué se emitió</td></tr>
+          <tr><td>¿Está en el payload?</td><td>sí, es un campo</td><td><b>no, y no puede</b></td></tr>
+          <tr><td>Función</td><td class="n">HMAC-SHA256 · con llave</td><td class="n">SHA-256 · sin llave</td></tr>
+          <tr><td>Entrada</td><td class="n">TENANT_ID</td><td>el documento canónico entero</td></tr>
+          <tr><td>Se calcula</td><td>una vez, al arrancar C3</td><td>una vez por evento</td></tr>
+          <tr><td>Cuántos hay</td><td class="n">50 · uno por tenant</td><td class="n">millones · uno por evento</td></tr>
+          <tr><td>Largo</td><td class="n">69 car · hmac: + 64 hex</td><td class="n">64 hex</td></tr>
+          <tr><td>Si se rompe</td><td>los bytes reportados mienten</td><td>se pierden eventos en silencio</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">ETAPA 4 · CADA 10 MILISEGUNDOS</div>
+      <h2>El disparo</h2>
+      <p>
+        El tick no construye nada. Mira qué eventos del segundo activo ya
+        vencieron, los mete en el buffer del tenant y lo suelta cuando toca.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 280" role="img" width="900" style="min-width:680px"
+             aria-label="El tick dispara los eventos vencidos, los acumula en un buffer y el emisor los envía sin esperar respuesta">
+          <defs>
+            <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace">
+
+            <!-- el segundo activo -->
+            <text x="14" y="26" fill="var(--det)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              SEGUNDO ACTIVO — una caja cerrada
+            </text>
+            <rect x="14" y="38" width="500" height="56" rx="4" fill="none" stroke="var(--det)" stroke-width="1.8"/>
+            <line x1="14" y1="76" x2="514" y2="76" stroke="var(--rule)" stroke-width="1.2"/>
+            <g stroke="var(--det)" stroke-width="1.4">
+              <line x1="30" y1="52" x2="30" y2="76"/><line x1="44" y1="52" x2="44" y2="76"/>
+              <line x1="52" y1="52" x2="52" y2="76"/><line x1="96" y1="52" x2="96" y2="76"/>
+              <line x1="118" y1="52" x2="118" y2="76"/><line x1="128" y1="52" x2="128" y2="76"/>
+            </g>
+            <g stroke="var(--ink-3)" stroke-width="1.2">
+              <line x1="200" y1="56" x2="200" y2="76"/><line x1="248" y1="56" x2="248" y2="76"/>
+              <line x1="262" y1="56" x2="262" y2="76"/><line x1="310" y1="56" x2="310" y2="76"/>
+              <line x1="352" y1="56" x2="352" y2="76"/><line x1="400" y1="56" x2="400" y2="76"/>
+              <line x1="432" y1="56" x2="432" y2="76"/><line x1="480" y1="56" x2="480" y2="76"/>
+            </g>
+            <line x1="150" y1="34" x2="150" y2="98" stroke="var(--alarma)" stroke-width="1.6"/>
+            <text x="158" y="112" fill="var(--alarma)" font-size="10.5">ahora</text>
+            <text x="30" y="112" fill="var(--det)" font-size="10.5">ya vencieron</text>
+            <text x="300" y="112" fill="var(--ink-3)" font-size="10.5">esperan su instante</text>
+
+            <line x1="90" y1="122" x2="90" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#a4)"/>
+
+            <!-- buffer -->
+            <rect x="14" y="156" width="240" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="134" y="178" text-anchor="middle" fill="currentColor" font-size="11.5" font-weight="600">buffer del tenant</text>
+            <text x="134" y="196" text-anchor="middle" fill="var(--ink-3)" font-size="10">se suelta al llegar a</text>
+            <text x="134" y="210" text-anchor="middle" fill="var(--ink-3)" font-size="10">eventos_por_request</text>
+
+            <line x1="254" y1="186" x2="304" y2="186" stroke="currentColor" stroke-width="1.5" marker-end="url(#a4)"/>
+
+            <!-- emisor -->
+            <rect x="312" y="156" width="240" height="60" rx="4" fill="none" stroke="var(--det)" stroke-width="1.8"/>
+            <text x="432" y="178" text-anchor="middle" fill="var(--det)" font-size="11.5" font-weight="600">emisor · undici</text>
+            <text x="432" y="196" text-anchor="middle" fill="var(--ink-3)" font-size="10">un pool por destino</text>
+            <text x="432" y="210" text-anchor="middle" fill="var(--ink-3)" font-size="10">keep-alive · timeout</text>
+
+            <line x1="552" y1="186" x2="602" y2="186" stroke="currentColor" stroke-width="1.5" marker-end="url(#a4)"/>
+            <rect x="610" y="156" width="140" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="680" y="186" text-anchor="middle" fill="currentColor" font-size="11.5">POST /events</text>
+            <text x="680" y="203" text-anchor="middle" fill="var(--ink-3)" font-size="10">x-prueba-id</text>
+
+            <!-- sin await -->
+            <rect x="312" y="232" width="438" height="34" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.4"/>
+            <text x="531" y="253" text-anchor="middle" fill="var(--det)" font-size="11">
+              enviar() devuelve un booleano, NO una promesa. Nunca se espera.
+            </text>
+
+            <!-- lazo abierto -->
+            <text x="580" y="46" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">Lazo abierto</text>
+            <text x="580" y="66" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">Si esperara la respuesta para</text>
+            <text x="580" y="82" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">mandar lo siguiente, un destino</text>
+            <text x="580" y="98" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">lento recibiría menos carga y</text>
+            <text x="580" y="114" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">parecería sano porque nadie</text>
+            <text x="580" y="130" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">lo está presionando.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Lo que no salga antes de que cambie el segundo <strong>no se arrastra</strong>:
+        se cuenta como <code>dropped_lag</code> y se descarta. Arrastrarlo
+        permitiría que un segundo superara su cuota máxima con deuda del
+        anterior, y el rango dejaría de significar nada.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">ETAPA 6 · LA CONTABILIDAD</div>
+      <h2>Dos instantes, no uno</h2>
+      <p>
+        <code>sent</code> se anota al llamar al endpoint. <code>completed</code>
+        se anota cuando la respuesta vuelve, con el código que sea. Caen en
+        segundos distintos, y esa distancia <em>es</em> la latencia.
+      </p>
+    </div>
+
+    <figure>
+      <div class="leyenda">
+        <span><i style="background: var(--det)"></i> sent — se llamó al endpoint</span>
+        <span><i style="background: var(--ident)"></i> completed — el endpoint respondió</span>
+        <span><i style="background: var(--nada)"></i> target — la cuota sorteada</span>
+      </div>
+      <div class="lienzo"><svg id="g-envio" role="img" aria-label="Serie por segundo de eventos enviados y completados"></svg></div>
+      <figcaption id="pie-envio"></figcaption>
+    </figure>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead>
+          <tr><th>Contador</th><th>Cuándo se anota</th><th>Qué acusa si crece</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="n">offered</td><td>el reloj lo pidió</td><td>—</td></tr>
+          <tr><td class="n">sent</td><td>se llamó a <code>pool.request()</code></td><td>—</td></tr>
+          <tr><td class="n">completed</td><td>dentro del <code>.then()</code>, con cualquier código</td><td>—</td></tr>
+          <tr><td class="n">ok / not_ok</td><td>desglose de <code>completed</code> por 2xx</td><td>el destino rechaza</td></tr>
+          <tr><td class="n">failed</td><td>en el <code>.catch()</code> — no hubo respuesta</td><td>timeout o red</td></tr>
+          <tr><td class="n">dropped_lag</td><td>al cerrar el segundo sin disparar todo</td><td><strong>el arnés</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="nota">
+      <b>failed no es completed.</b> Un 429 es una respuesta: la petición
+      terminó. Un timeout no lo es. Confundirlos borraría la diferencia entre
+      «el destino me dijo que no» y «el destino no dijo nada», que son dos
+      diagnósticos distintos.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <h2>Y el informe</h2>
+      <p>
+        Tres niveles encadenados por tenant. <code>seconds</code> es lo medido;
+        <code>minutes</code> suma sus segundos; <code>total</code> suma sus
+        minutos. Un descuadre entre niveles acusa a la agregación, nunca a la
+        medición.
+      </p>
+    </div>
+
+    <pre><span class="c">// orquestador/logs/&lt;prueba&gt;.json — un segundo</span>
+{
+  <span class="k">"seg"</span>: <span class="s">5</span>, <span class="k">"at"</span>: <span class="s">"2026-08-30T21:35:33.000Z"</span>,
+  <span class="k">"target_per_s"</span>: <span class="s">192</span>,        <span class="c">// la cuota que se sorteó</span>
+  <span class="k">"metrics"</span>: {
+    <span class="k">"sent"</span>: <span class="s">192</span>,      <span class="k">"weight_sent"</span>: <span class="s">"431.3 KB"</span>,
+    <span class="k">"completed"</span>: <span class="s">126</span>, <span class="k">"weight_completed"</span>: <span class="s">"276.1 KB"</span>,
+    <span class="k">"ok"</span>: <span class="s">126</span>, <span class="k">"not_ok"</span>: <span class="s">0</span>, <span class="k">"failed"</span>: <span class="s">0</span>,
+    <span class="k">"dropped_saturation"</span>: <span class="s">0</span>, <span class="k">"dropped_lag"</span>: <span class="s">0</span>,
+    <span class="k">"latency_p50_ms"</span>: <span class="s">810.2</span>, <span class="k">"latency_p99_ms"</span>: <span class="s">1470.9</span>,
+    <span class="k">"latency_max_ms"</span>: <span class="s">1503.1</span>, <span class="k">"latency_avg_ms"</span>: <span class="s">806.1</span>,
+    <span class="k">"latency_samples"</span>: <span class="s">126</span>
+  }
+}</pre>
+
+    <div class="prosa">
+      <p>
+        Los percentiles son <strong>exactos</strong> por segundo: salen de las
+        muestras de ese segundo. En <code>minutes</code> y <code>total</code> son
+        aproximados, ponderados por número de muestras — un percentil de
+        percentiles no es el percentil real, y no hay forma de calcularlo exacto
+        sin guardar cientos de millones de muestras.
+      </p>
+      <p>
+        El informe cierra cuando <strong>no queda nada en vuelo</strong>, no
+        cuando se acaba el reloj. Por eso dura más que los <code>seconds</code>
+        que pediste: los últimos segundos solo reciben.
+      </p>
+    </div>
+
+    <div class="cifras">
+      <div class="cifra"><span class="v">3228</span><span class="k">ofrecidos</span></div>
+      <div class="cifra"><span class="v">3228</span><span class="k">enviados</span></div>
+      <div class="cifra"><span class="v">3228</span><span class="k">completados</span></div>
+      <div class="cifra"><span class="v">0</span><span class="k">descartados</span></div>
+      <div class="cifra"><span class="v">5 ms</span><span class="k">en planificar</span></div>
+      <div class="cifra"><span class="v">20/20</span><span class="k">segundos exactos</span></div>
+    </div>
+  </section>
+
+  <footer>
+    Todas las cifras y series salen de corridas reales contra dos receptores C3
+    locales con retardo simulado de 0,1–1,5 s. El pool, el plan y la
+    materialización se verificaron interceptando los cuerpos en el cable.
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Datos reales: [seg, target, sent, completed]
+  const SERIE = [[1,45,45,0],[2,73,73,57],[3,34,34,63],[4,46,46,44],[5,75,75,54],
+    [6,47,47,59],[7,69,69,59],[8,72,72,71],[9,60,60,65],[10,74,74,73],[11,50,49,55],
+    [12,34,34,49],[13,49,49,42],[14,41,41,39],[15,41,41,44],[16,46,46,42],[17,69,68,49],
+    [18,74,73,67],[19,26,26,59],[20,53,53,42],[21,40,37,51],[22,null,0,25],[23,null,0,3]];
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (t, a = {}) => { const n = document.createElementNS(NS, t);
+    for (const [k, v] of Object.entries(a)) n.setAttribute(k, String(v)); return n; };
+  const txt = (x, y, s, a = {}) => { const n = el('text', { x, y, ...a }); n.textContent = s; return n; };
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+  const svg = document.getElementById('g-envio');
+  const W = 900, H = 240, ML = 40, MR = 14, MT = 18, MB = 36;
+  const pw = W - ML - MR, ph = H - MT - MB;
+  const max = Math.max(...SERIE.flatMap(([, t, s, c]) => [t ?? 0, s, c])) * 1.08;
+  const paso = pw / SERIE.length;
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W);
+  svg.style.minWidth = '640px';
+
+  const y = (v) => MT + ph - (v / max) * ph;
+
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i;
+    svg.append(el('line', { x1: ML, x2: W - MR, y1: y(v), y2: y(v),
+      stroke: 'var(--rule-fine)', 'stroke-width': 1 }));
+    svg.append(txt(ML - 8, y(v) + 3.5, String(Math.round(v)),
+      { 'text-anchor': 'end', fill: 'var(--ink-3)', 'font-family': MONO, 'font-size': 10 }));
+  }
+
+  const ancho = (paso - 6) / 2;
+  SERIE.forEach(([seg, target, sent, comp], i) => {
+    const x0 = ML + i * paso + 2;
+    if (target !== null) {
+      svg.append(el('line', { x1: x0, x2: x0 + ancho, y1: y(target), y2: y(target),
+        stroke: 'var(--nada)', 'stroke-width': 2 }));
+    }
+    if (sent > 0) {
+      const h = Math.max(1.5, (sent / max) * ph);
+      svg.append(el('rect', { x: x0, y: MT + ph - h, width: ancho, height: h,
+        rx: Math.min(4, ancho / 2), fill: 'var(--det)' }));
+    }
+    if (comp > 0) {
+      const h = Math.max(1.5, (comp / max) * ph);
+      svg.append(el('rect', { x: x0 + ancho + 2, y: MT + ph - h, width: ancho, height: h,
+        rx: Math.min(4, ancho / 2), fill: 'var(--ident)' }));
+    }
+    if (seg % 2 === 1) {
+      svg.append(txt(x0 + ancho + 1, MT + ph + 16, String(seg),
+        { 'text-anchor': 'middle', fill: 'var(--ink-3)', 'font-family': MONO, 'font-size': 10 }));
+    }
+  });
+
+  const finEnvio = SERIE.findIndex(([, t]) => t === null);
+  if (finEnvio > 0) {
+    const x = ML + finEnvio * paso;
+    svg.append(el('line', { x1: x, x2: x, y1: MT, y2: MT + ph,
+      stroke: 'var(--alarma)', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }));
+    svg.append(txt(x + 6, MT + 14, 'el reloj para',
+      { fill: 'var(--alarma)', 'font-family': MONO, 'font-size': 10.5 }));
+  }
+
+  svg.append(txt(ML, MT + ph + 32, 'segundo desde el arranque',
+    { fill: 'var(--ink-3)', 'font-family': MONO, 'font-size': 10 }));
+
+  const tSent = SERIE.reduce((a, [, , s]) => a + s, 0);
+  const tComp = SERIE.reduce((a, [, , , c]) => a + c, 0);
+  const desiguales = SERIE.filter(([, , s, c]) => s !== c && (s > 0 || c > 0)).length;
+  document.getElementById('pie-envio').textContent =
+    `${tSent} enviados y ${tComp} completados: cuadran en el total y no cuadran en ningún ` +
+    `segundo — ${desiguales} de ${SERIE.length} ventanas difieren. A la derecha de la línea roja ` +
+    `el reloj ya paró y solo entran respuestas.`;
+})();
+</script>
+
+</body>
+</html>

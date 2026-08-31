@@ -1,0 +1,83 @@
+{
+  "counterparty": {
+    "cnpj": "98765432000112",
+    "ie": "283194857",
+    "legal_name": "Distribuidora Sul SA",
+    "uf": "PR"
+  },
+  "document": {
+    "access_key": "35260812345678000195550030004819271284930572",
+    "cfop": "6102",
+    "issued_at": "2026-08-29T14:31:55.000Z",
+    "model": "55",
+    "nature": "Venda de mercadoria de terceiros",
+    "number": "000481927",
+    "operation": "saida",
+    "series": "003"
+  },
+  "event_id": "018f3c2a-7b41-7c6e-9d02-4a1f8e5b3c91",
+  "event_type": "fiscal.document.issued",
+  "items": [
+    {
+      "code": "MP-4471-A",
+      "description": "Chapa aco carbono 2.00mm",
+      "line": 1,
+      "ncm": "72083990",
+      "quantity": "1250.000",
+      "total": "14350.00",
+      "unit": "KG",
+      "unit_price": "11.4800"
+    },
+    {
+      "line": 2,
+      "code": "MP-8823-C",
+      "description": "Perfil U dobrado 100x50mm",
+      "ncm": "72166100",
+      "unit": "PC",
+      "quantity": "80.000",
+      "unit_price": "51.2500",
+      "total": "4100.00"
+    }
+  ],
+  "occurred_at": "2026-08-29T14:32:08.412Z",
+  "origin": {
+    "environment": "poc",
+    "system": "erp-connector",
+    "version": "3.11.2"
+  },
+  "participant": {
+    "cnpj": "12345678000195",
+    "ie": "110042490114",
+    "legal_name": "Metalurgica Paulista Ltda",
+    "municipality_code": "3550308",
+    "uf": "SP"
+  },
+  "payment": {
+    "due_first": "2026-09-28",
+    "installments": 3,
+    "method": "boleto"
+  },
+  "rpf_id": "018f3c2a-7b41-7c6e-9d02-4a1f8e5b3c90",
+  "schema_version": "1.4.0",
+  "sequence": 4821,
+  "party_id": "hmac:9f2b7c41e8a35d06b1f4c92e7a08d5b33b5d80a7e29c4f1b60d53a8e14c7b2f9",
+  "totals": {
+    "cofins": "1437.96",
+    "discount": "350.00",
+    "freight": "820.50",
+    "icms": "2270.46",
+    "ipi": "922.50",
+    "items_count": 2,
+    "pis": "312.19",
+    "products": "18450.00",
+    "tax_base": "18920.50",
+    "total": "18920.50"
+  },
+  "transport": {
+    "carrier_cnpj": "45678901000133",
+    "gross_weight": "1338.400",
+    "mode": "cif",
+    "vehicle_plate": "BRA2E19"
+  },
+  "padding": "oruFG4gebwmI1bptgyl/DTPCnDOmWnOz6fHdr7Gk3rCIZ/PiNhoOULBf846WySZZZTml6faJTdXcAZJK6XlNT8aPbIITxwxlsBCtSiC4pKUUZCZG07Al+WaCXOhZgPLBj9ZW3NwTDeFv2/Yh3HsRNQ9JEhZWJOhAVcP4VE8w9raalnVKLx6cvqChX01tw6i0TC34BCB4SDfRl01PPtTT2OClmQj++jxlQu7r1M/1HeQSgxYzVh9qHMEcyAyPETmLbj6mVdZCuHTQniU25oOVdOsZJ2wnrgTYL25WDTeldcvJoA+JgMcCnvG94oJ8Okp/yBlDyFiK93eYZjn4LsUd9dUY3zJV9x03D8Gg01DR/UNBWjEL8UIcUe+MwCoUjhwQPUDS3OG4/fWonswH53Q5j5rJK1RHK7BbvJ3OJJ4gTIsFINZrDLclyQOhya6fgLp6tUpGM0YQnmN/I3F+yr60IXITc67kHCUbDnTY5I0HuhaGOQ5ILQo+XDYTXShVLJ5hLXoP9Hs9PxHvsrF9cjLLWBxShDl5YVi2D1ZJO4BOptaOllkqNZsXREviqtc9Bbqc/WV/nCeDnICMk3INuCFxjWjZA2KOxTuR/0s2dNH71rPyQ2Q7H2u9kRUP8LIFnzj+SRXqnHmQfWyE4MF92idQVjYm+xYdrOl2C/iODuuEWW2Da1tN5zw0ANi8+XvLbzO01qGNkN4UF8sAkStLOdxKipfxJL3XEO4wVLjpwrW6tDgZ1L1OnJTxgI0XI0jCLBHqHslFPg/SqsG3pySGzQL6fWHz3wVH2geRTQzaXmuI9eKowGkk9BMl+espCWEW8VvYOFXGpuu+BCANbyYay8qDGythnLTaw8gcTj+csxRqpKIdUfcfkwcUOECn6cQoDFHyVYi8QCW5vfyhMG0CfvpSZ4m8I2KxmlnSUxQ5dcB/2FSd2KoHqO/Fk6lcBlRDhce6tvJtOIYaeLJFDuBWSvS63Q8Pu+hiFcTXoEy63st1zd7whyph00IFfj5tR13YfFSkcIvIb5uYSKKMZSkFY1VfynCCkAG8Nh0UPbkhDHW2Xyd9mDMCoyYkF8VOFqw9Cg4H+9iPANz+rbydJPRR/fjP5iSrT2nN2L+QznQSjH6QXN2qHdODWcPszB8dSW+M0Uxcc9wc3CybtZ5ZSucMlGg9IJIxgReQl+1OhrBzeikZp699PllLopZaecK3zMthAKkgfIJWAexJBnlIDPythQ0LsOnnLwUlemYa2dABFBLSG/ShlmdbKtxFjP9y7NoRYk1xx5Em4aZ4/CRsBJGyngCV+9nArEu5vsAwU3HeezgpIXFcpw9p3MpyPMYTuyrpj/XUCONlGUa0x6LP5dqDGNInMk4l+CGqyKiLlu3N1+0KtnZqvMpjuYJbTW4us/lA6a1gShZMXGCgRpfpT0FK64fiE2PhL0z4l38iL5HCp1vYsmlmMV9gXRamHNg8hf4H65U1JfeSflFljBSQ"
+}

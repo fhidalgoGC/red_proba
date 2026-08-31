@@ -1,0 +1,6 @@
+*.tsbuildinfo
+dist-test/
+dist/
+logs/
+node_modules/
+salida/

@@ -1,0 +1,35 @@
+# Dependencias
+node_modules/
+
+# Compilados de TypeScript
+dist/
+dist-test/
+*.tsbuildinfo
+
+# Terraform
+.terraform/
+*.tfplan
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+estado.auto.tfvars
+
+# Secretos y entorno
+.env
+.env.*
+*.pem
+*.key
+
+# Salidas de ejecución y medición
+logs/
+salida/
+*.log
+
+# Cachés de herramientas
+.atl/.skill-registry.cache.json
+
+# Sistema operativo
+.DS_Store
+
+# Empaquetados sueltos
+files.zip

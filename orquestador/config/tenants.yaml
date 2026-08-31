@@ -1,0 +1,17 @@
+# Registro de destinos del orquestador.
+#
+# ESTE ARCHIVO LO GENERA TERRAFORM con el mismo `for_each` que crea los
+# tenants (ver terraform/modules/tenant). Lo que hay aqui es el ejemplo de
+# desarrollo local. Si lo editas a mano en un entorno desplegado, se va a
+# desincronizar del inventario real y el orquestador le va a pegar a
+# endpoints que no existen.
+#
+# peso: opcional. Si se omite en TODOS, el reparto lo decide `reparto` del
+# perfil (zipf o uniforme). Si se especifica en alguno, manda el peso
+# explicito y `reparto` se ignora.
+
+tenants:
+  - id: tenant-01
+    url: http://localhost:3001
+  - id: tenant-02
+    url: http://localhost:3002

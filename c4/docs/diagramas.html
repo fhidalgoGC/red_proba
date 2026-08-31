@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Reset minimo — el mismo que aplica el visor de artefactos. */
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+</style>
+<title>C4, el operador neutro, por dentro</title>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf; --rule-fine:#dde1db;
+    --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    /* violeta = lo sellado, lo que no se puede leer todavia
+       verde azulado = lo abierto y verificado, el libro
+       rojo = el camino del veneno */
+    --sellado:#5a4a9f; --sellado-soft:#5a4a9f1f;
+    --claro:#0b6a63;   --claro-soft:#0b6a631f;
+    --alarma:#a32a1c;  --alarma-soft:#a32a1c14;
+    --nada:#7f8a92;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 34rem; --wide: 64rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438; --rule-fine:#232b2f;
+      --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+      --sellado:#9c8de0; --sellado-soft:#9c8de026;
+      --claro:#45aa9e;   --claro-soft:#45aa9e26;
+      --alarma:#e2705c;  --alarma-soft:#e2705c1a;
+      --nada:#8f9aa1; }
+  }
+  :root[data-theme="dark"] { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438;
+    --rule-fine:#232b2f; --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+    --sellado:#9c8de0; --sellado-soft:#9c8de026; --claro:#45aa9e; --claro-soft:#45aa9e26;
+    --alarma:#e2705c; --alarma-soft:#e2705c1a; --nada:#8f9aa1; }
+  :root[data-theme="light"] { --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf;
+    --rule-fine:#dde1db; --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    --sellado:#5a4a9f; --sellado-soft:#5a4a9f1f; --claro:#0b6a63; --claro-soft:#0b6a631f;
+    --alarma:#a32a1c; --alarma-soft:#a32a1c14; --nada:#7f8a92; }
+
+  body { background: var(--ground); color: var(--ink); font-family: var(--serif);
+         font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .hoja { max-width: var(--wide); margin: 0 auto; padding: 3.5rem 1.5rem 6rem;
+          display: flex; flex-direction: column; gap: 2.5rem; }
+  .prosa { max-width: var(--measure); }
+  .prosa > * + * { margin-top: 1rem; }
+
+  h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; }
+  h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.02em; }
+  h2 { font-size: 1.55rem; letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; }
+  p { margin: 0; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+  p code, li code, td code, figcaption code { background: var(--panel); padding: 0.08em 0.34em; border-radius: 3px; }
+
+  .eyebrow { font-family: var(--sans); font-size: 0.7rem; font-weight: 600;
+             letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .paso { font-family: var(--mono); font-size: 0.78rem; color: var(--claro);
+          letter-spacing: 0.06em; font-weight: 600; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 2rem; }
+  header .standfirst { max-width: var(--measure); margin-top: 1rem; font-size: 1.08rem; color: var(--ink-2); }
+
+  section { display: flex; flex-direction: column; gap: 1.3rem; }
+  hr.sep { border: 0; border-top: 1px solid var(--rule); margin: 0.75rem 0 0; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lienzo { overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; }
+  figcaption { font-family: var(--sans); font-size: 0.78rem; color: var(--ink-2);
+               line-height: 1.55; max-width: 64ch; }
+
+  .tabla-envoltorio { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.45rem 0.85rem 0.45rem 0;
+           border-bottom: 1px solid var(--rule-fine); vertical-align: top; }
+  th { font-family: var(--sans); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  pre { background: var(--raised); border: 1px solid var(--rule); border-left: 2px solid var(--claro);
+        border-radius: 3px; padding: 0.8rem 1rem; overflow-x: auto;
+        font-family: var(--mono); font-size: 0.78rem; line-height: 1.58; }
+  pre .c { color: var(--ink-3); }
+  pre .k { color: var(--sellado); }
+  pre .s { color: var(--claro); }
+
+  .nota { border-left: 2px solid var(--alarma); background: var(--alarma-soft);
+          border-radius: 0 3px 3px 0; padding: 0.75rem 1rem; max-width: 46rem;
+          font-size: 0.95rem; }
+  .nota b { color: var(--alarma); }
+  .nota.calma { border-left-color: var(--claro); background: var(--claro-soft); }
+  .nota.calma b { color: var(--claro); }
+
+  .cifras { display: flex; flex-wrap: wrap; gap: 0.4rem 2.2rem; }
+  .cifra { display: flex; flex-direction: column; gap: 0.1rem; }
+  .cifra .v { font-family: var(--mono); font-size: 1.25rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .cifra .k { font-family: var(--sans); font-size: 0.67rem; letter-spacing: 0.08em;
+              text-transform: uppercase; color: var(--ink-3); }
+
+  .leyenda { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+             font-family: var(--sans); font-size: 0.77rem; color: var(--ink-2); }
+  .leyenda span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .leyenda i { width: 0.75rem; height: 0.75rem; border-radius: 2px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 1.4rem; font-family: var(--sans);
+           font-size: 0.78rem; color: var(--ink-3); max-width: 62ch; }
+  footer a { color: var(--claro); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="hoja">
+
+  <header>
+    <div class="eyebrow">PoC RPF Proof Ledger · track G</div>
+    <h1>C4, el operador neutro, por dentro</h1>
+    <p class="standfirst">
+      Toma lotes de diez de una cola FIFO, le pide a KMS <em>una llave</em> —no el
+      documento—, abre el sobre en local, comprueba con una clave pública cacheada que
+      la firma cubre exactamente lo que va a guardar, y escribe el inbox y los cinco
+      schemas en una sola transacción. Lo que no abre o no verifica sale de la cola
+      <em>en el acto</em>. Siete diagramas de por qué cada una de esas decisiones no era
+      la obvia.
+    </p>
+  </header>
+
+  <section>
+    <div class="prosa">
+      <div class="paso">01 · LA FRONTERA</div>
+      <h2>Entre C3 y C4 no hay ruta, y ésa es la afirmación</h2>
+      <p>
+        Sin peering, sin Transit Gateway, sin PrivateLink. Cada VPC alcanza SQS por su
+        propio endpoint y por ningún otro sitio.
+      </p>
+      <p>
+        Con peering, «la cola es el único canal» sería una regla que alguien puede
+        modificar. Sin peering es una propiedad de la topología: <strong>no hay camino
+        que aflojar</strong>. Eso es lo que se puede afirmar ante una auditoría.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 250" role="img"
+             aria-label="C3 publica en una cola FIFO y C4 consume de ella; no existe ninguna ruta de red directa entre las dos VPC.">
+          <defs>
+            <marker id="f1-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- VPC C3 -->
+          <rect x="16" y="34" width="236" height="108" rx="4" fill="none"
+                stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="5 4"/>
+          <text x="28" y="26" font-family="var(--sans)" font-size="11" fill="var(--ink-3)"
+                letter-spacing="1">VPC C3 · PARTICIPANTE</text>
+          <rect x="36" y="58" width="196" height="60" rx="3" fill="var(--sellado-soft)"
+                stroke="var(--sellado)"/>
+          <text x="134" y="82" text-anchor="middle" font-family="var(--sans)" font-size="13"
+                fill="var(--ink)">50 × (API + Postgres)</text>
+          <text x="134" y="101" text-anchor="middle" font-family="var(--mono)" font-size="11"
+                fill="var(--sellado)">firma · cifra</text>
+
+          <!-- Cola -->
+          <rect x="342" y="52" width="196" height="72" rx="3" fill="var(--panel)"
+                stroke="currentColor" stroke-opacity="0.5"/>
+          <text x="440" y="78" text-anchor="middle" font-family="var(--sans)" font-size="13"
+                fill="var(--ink)">SQS FIFO</text>
+          <text x="440" y="97" text-anchor="middle" font-family="var(--mono)" font-size="11"
+                fill="var(--ink-3)">MessageGroupId = rpf_id</text>
+          <text x="440" y="113" text-anchor="middle" font-family="var(--mono)" font-size="11"
+                fill="var(--ink-3)">visibility 60 s · redrive ×5</text>
+
+          <!-- VPC C4 -->
+          <rect x="628" y="34" width="236" height="108" rx="4" fill="none"
+                stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="5 4"/>
+          <text x="640" y="26" font-family="var(--sans)" font-size="11" fill="var(--ink-3)"
+                letter-spacing="1">VPC C4 · OPERADOR NEUTRO</text>
+          <rect x="648" y="58" width="196" height="60" rx="3" fill="var(--claro-soft)"
+                stroke="var(--claro)"/>
+          <text x="746" y="82" text-anchor="middle" font-family="var(--sans)" font-size="13"
+                fill="var(--ink)">consumidor + Postgres</text>
+          <text x="746" y="101" text-anchor="middle" font-family="var(--mono)" font-size="11"
+                fill="var(--claro)">descifra · NUNCA firma</text>
+
+          <!-- flechas -->
+          <line x1="236" y1="88" x2="334" y2="88" stroke="var(--sellado)" stroke-width="1.5"
+                marker-end="url(#f1-punta)" color="var(--sellado)"/>
+          <text x="285" y="79" text-anchor="middle" font-family="var(--mono)" font-size="10.5"
+                fill="var(--sellado)">SendMessage</text>
+          <line x1="546" y1="88" x2="644" y2="88" stroke="var(--claro)" stroke-width="1.5"
+                marker-end="url(#f1-punta)" color="var(--claro)"/>
+          <text x="595" y="79" text-anchor="middle" font-family="var(--mono)" font-size="10.5"
+                fill="var(--claro)">ReceiveMessage</text>
+
+          <!-- la ruta que no existe -->
+          <path d="M 134 142 L 134 200 L 746 200 L 746 142" fill="none" stroke="var(--nada)"
+                stroke-width="1.4" stroke-dasharray="6 5" opacity="0.75"/>
+          <line x1="424" y1="188" x2="456" y2="212" stroke="var(--alarma)" stroke-width="2.2"/>
+          <line x1="456" y1="188" x2="424" y2="212" stroke="var(--alarma)" stroke-width="2.2"/>
+          <text x="440" y="236" text-anchor="middle" font-family="var(--sans)" font-size="12"
+                fill="var(--ink-2)">no hay peering, ni Transit Gateway, ni PrivateLink</text>
+        </svg>
+      </div>
+      <figcaption>
+        El único canal entre los dos dominios es la cola. La línea de abajo es la ruta que
+        <em>no</em> existe: quitarla del dibujo la haría parecer una omisión, y es la
+        decisión (D-03).
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">02 · CRIPTOGRAFÍA</div>
+      <h2>KMS descifra una llave de 32 bytes, no el documento</h2>
+      <p>
+        Ésta es la pregunta que más se hace y la que más se responde mal. Lo que va a KMS
+        es la <code>edk</code> —la data key cifrada, unos pocos bytes—, no el payload.
+        El documento lo abre C4 en su propio proceso con AES-256-GCM.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 330" role="img"
+             aria-label="El sobre lleva una data key cifrada y el ciphertext; KMS descifra solo la data key, y C4 abre el ciphertext en local. El caché de data key sirvió diecisiete mensajes con una sola llamada.">
+          <defs>
+            <marker id="f2-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- el sobre -->
+          <text x="16" y="24" font-family="var(--sans)" font-size="11" fill="var(--ink-3)"
+                letter-spacing="1">EL SOBRE · ~4,3 KB EN LA COLA</text>
+          <rect x="16" y="34" width="228" height="150" rx="3" fill="var(--sellado-soft)"
+                stroke="var(--sellado)"/>
+          <rect x="32" y="50" width="196" height="30" rx="2" fill="var(--raised)"
+                stroke="var(--sellado)" stroke-opacity="0.6"/>
+          <text x="130" y="69" text-anchor="middle" font-family="var(--mono)" font-size="11.5"
+                fill="var(--sellado)">edk · ~200 B</text>
+          <rect x="32" y="88" width="196" height="80" rx="2" fill="var(--raised)"
+                stroke="var(--sellado)" stroke-opacity="0.6"/>
+          <text x="130" y="118" text-anchor="middle" font-family="var(--mono)" font-size="11.5"
+                fill="var(--sellado)">ct · 3 KB</text>
+          <text x="130" y="137" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">{ payload, signature }</text>
+          <text x="130" y="155" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">iv · tag · key_id</text>
+
+          <!-- KMS -->
+          <line x1="248" y1="65" x2="336" y2="65" stroke="var(--sellado)" stroke-width="1.5"
+                marker-end="url(#f2-punta)" color="var(--sellado)"/>
+          <text x="292" y="56" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--sellado)">solo la edk</text>
+          <rect x="340" y="40" width="168" height="52" rx="3" fill="var(--panel)"
+                stroke="currentColor" stroke-opacity="0.5"/>
+          <text x="424" y="62" text-anchor="middle" font-family="var(--sans)" font-size="12.5"
+                fill="var(--ink)">KMS Decrypt</text>
+          <text x="424" y="80" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">red · 20–40 ms</text>
+
+          <!-- data key -->
+          <line x1="512" y1="65" x2="592" y2="65" stroke="currentColor" stroke-width="1.5"
+                marker-end="url(#f2-punta)" stroke-opacity="0.6"/>
+          <rect x="596" y="46" width="150" height="40" rx="3" fill="var(--claro-soft)"
+                stroke="var(--claro)"/>
+          <text x="671" y="71" text-anchor="middle" font-family="var(--mono)" font-size="11.5"
+                fill="var(--claro)">data key · 32 B</text>
+
+          <!-- AES local -->
+          <path d="M 671 90 L 671 130 L 424 130 L 424 148" fill="none" stroke="var(--claro)"
+                stroke-width="1.5" marker-end="url(#f2-punta)" color="var(--claro)"/>
+          <path d="M 130 172 L 130 200 L 340 200" fill="none" stroke="var(--sellado)"
+                stroke-width="1.5" stroke-opacity="0.8"/>
+          <path d="M 340 200 L 418 200" fill="none" stroke="var(--sellado)" stroke-width="1.5"
+                marker-end="url(#f2-punta)" color="var(--sellado)"/>
+          <rect x="340" y="150" width="168" height="72" rx="3" fill="var(--raised)"
+                stroke="var(--claro)"/>
+          <text x="424" y="178" text-anchor="middle" font-family="var(--sans)" font-size="12.5"
+                fill="var(--ink)">AES-256-GCM</text>
+          <text x="424" y="196" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--claro)">en proceso · 0 red</text>
+          <text x="424" y="213" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">node:crypto</text>
+
+          <line x1="512" y1="186" x2="592" y2="186" stroke="var(--claro)" stroke-width="1.5"
+                marker-end="url(#f2-punta)" color="var(--claro)"/>
+          <rect x="596" y="164" width="150" height="44" rx="3" fill="var(--claro-soft)"
+                stroke="var(--claro)"/>
+          <text x="671" y="182" text-anchor="middle" font-family="var(--sans)" font-size="12.5"
+                fill="var(--ink)">payload</text>
+          <text x="671" y="199" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">+ signature</text>
+
+          <!-- cache -->
+          <rect x="340" y="252" width="406" height="56" rx="3" fill="none"
+                stroke="var(--claro)" stroke-dasharray="5 4"/>
+          <path d="M 671 96 L 760 96 L 760 280 L 752 280" fill="none" stroke="var(--claro)"
+                stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#f2-punta)"
+                color="var(--claro)"/>
+          <text x="543" y="274" text-anchor="middle" font-family="var(--sans)" font-size="12"
+                fill="var(--ink)">caché de data key, por <tspan font-family="var(--mono)">edk</tspan></text>
+          <text x="543" y="294" text-anchor="middle" font-family="var(--mono)" font-size="11"
+                fill="var(--claro)">1 Decrypt sirvió 17 mensajes · 16 aciertos</text>
+        </svg>
+      </div>
+      <figcaption>
+        C3 pide una data key por lote y la reusa, así que C4 puede cachearla por
+        <code>edk</code>. Sin ese caché habría un <code>Decrypt</code> por mensaje para
+        obtener N veces la misma llave: el tramo <code>e7b→e8</code> mediría la latencia
+        de KMS en vez del descifrado, y C4 se toparía antes con la cuota de KMS que con
+        la de la cola.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y la firma no pasa por KMS en absoluto.</b> C4 baja la clave pública una vez con
+      <code>GetPublicKey</code>, la cachea y verifica Ed25519 en proceso. Con
+      <code>kms:Verify</code> sería una llamada de red por evento contra una cuota que
+      comparten los 50 tenants: <strong>C4 se saturaría en KMS antes que en cualquier
+      componente que la PoC quiere medir</strong>, y P3 respondería «el límite es KMS»
+      por un motivo de implementación. Además, verificar en local deja escrito que C4
+      solo necesita <code>GetPublicKey</code> — nunca <code>Sign</code>.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">03 · EL CAMINO</div>
+      <h2>Siete guardas, y tres salidas distintas</h2>
+      <p>
+        La diferencia entre las guardas no es de severidad: es de <strong>qué hacer
+        después</strong>. Seis mandan a la DLQ y borran de la cola. La séptima no borra.
+      </p>
+    </div>
+
+    <div class="leyenda">
+      <span><i style="background:var(--sellado)"></i> aún sellado</span>
+      <span><i style="background:var(--claro)"></i> abierto y verificado</span>
+      <span><i style="background:var(--alarma)"></i> veneno → DLQ + alarma, se borra</span>
+      <span><i style="background:var(--nada)"></i> transitorio → NO se borra</span>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 500" role="img"
+             aria-label="Las siete comprobaciones que atraviesa un mensaje. Las seis primeras, si fallan, lo mandan a la DLQ con alarma y lo borran de la cola. La séptima, si falla, lo deja en la cola para que SQS lo reentregue.">
+          <defs>
+            <marker id="f3-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- columna DLQ -->
+          <rect x="612" y="52" width="150" height="290" rx="3" fill="var(--alarma-soft)"
+                stroke="var(--alarma)" stroke-dasharray="5 4"/>
+          <text x="687" y="196" text-anchor="middle" font-family="var(--sans)" font-size="13"
+                fill="var(--alarma)">DLQ + alarma</text>
+          <text x="687" y="215" text-anchor="middle" font-family="var(--mono)" font-size="10"
+                fill="var(--ink-3)">y se borra en el acto</text>
+
+          <!-- marcas de tiempo -->
+          <text x="16" y="30" font-family="var(--mono)" font-size="11" fill="var(--claro)">e7</text>
+          <text x="40" y="30" font-family="var(--sans)" font-size="11.5" fill="var(--ink-3)">llegó el lote</text>
+          <text x="16" y="48" font-family="var(--mono)" font-size="11" fill="var(--claro)">e7b</text>
+          <text x="46" y="48" font-family="var(--sans)" font-size="11.5" fill="var(--ink-3)">le toca a este mensaje</text>
+
+          <!-- pasos -->
+          <g>
+            <rect x="16" y="58" width="392" height="34" rx="3" fill="var(--sellado-soft)" stroke="var(--sellado)"/>
+            <text x="30" y="80" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">1 · ¿tiene forma de sobre?</text>
+            <line x1="412" y1="75" x2="606" y2="75" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="68" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">no_es_sobre</text>
+
+            <rect x="16" y="100" width="392" height="34" rx="3" fill="var(--sellado-soft)" stroke="var(--sellado)"/>
+            <text x="30" y="122" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">2 · Decrypt + AES-256-GCM</text>
+            <text x="392" y="122" text-anchor="end" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">e8</text>
+            <line x1="412" y1="117" x2="606" y2="117" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="110" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">no_descifra</text>
+
+            <rect x="16" y="142" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="30" y="164" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">3 · firma Ed25519, en local</text>
+            <text x="392" y="164" text-anchor="end" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">e9</text>
+            <line x1="412" y1="153" x2="606" y2="153" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="146" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">firma_invalida</text>
+            <line x1="412" y1="170" x2="606" y2="170" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="184" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">llave_no_aceptada</text>
+
+            <rect x="16" y="196" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="30" y="218" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">4 · ¿grupo == rpf_id firmado?</text>
+            <line x1="412" y1="213" x2="606" y2="213" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="206" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">rpf_id_no_coincide</text>
+
+            <rect x="16" y="238" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="30" y="260" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">5 · ¿dedup declarado == recalculado?</text>
+            <line x1="412" y1="255" x2="606" y2="255" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="248" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">dedup_no_coincide</text>
+
+            <rect x="16" y="280" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="30" y="302" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">6 · ¿rpf_id es un UUID?</text>
+            <line x1="412" y1="297" x2="606" y2="297" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
+            <text x="509" y="290" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">rpf_id_invalido</text>
+
+            <rect x="16" y="330" width="392" height="52" rx="3" fill="var(--raised)" stroke="var(--claro)" stroke-width="1.6"/>
+            <text x="30" y="352" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">7 · TRANSACCIÓN: inbox + 5 schemas</text>
+            <text x="30" y="371" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">COMMIT</text>
+            <text x="392" y="371" text-anchor="end" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">e10</text>
+            <line x1="412" y1="356" x2="606" y2="356" stroke="var(--nada)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--nada)"/>
+            <text x="509" y="349" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--nada)">NO se borra</text>
+          </g>
+
+          <!-- caja transitorio -->
+          <rect x="612" y="334" width="150" height="60" rx="3" fill="none" stroke="var(--nada)" stroke-dasharray="5 4"/>
+          <text x="687" y="357" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">SQS reentrega</text>
+          <text x="687" y="375" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">redrive a las 5</text>
+
+          <!-- salida ok -->
+          <path d="M 212 388 L 212 424" fill="none" stroke="var(--claro)" stroke-width="1.5" marker-end="url(#f3-punta)" color="var(--claro)"/>
+          <rect x="90" y="428" width="244" height="38" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="212" y="452" text-anchor="middle" font-family="var(--sans)" font-size="12.5" fill="var(--claro)">DeleteMessageBatch</text>
+
+          <text x="16" y="490" font-family="var(--sans)" font-size="11.5" fill="var(--ink-3)">se borra DESPUÉS de persistir, nunca antes</text>
+        </svg>
+      </div>
+      <figcaption>
+        Un sobre que no abre con la llave correcta no va a abrir la segunda vez tampoco, y
+        un <code>rpf_id</code> que no es UUID no se vuelve UUID esperando: <strong>un dato
+        inválido no mejora con el tiempo</strong>. Que la base no responda, sí. Confundir
+        los dos casos es el error caro en las dos direcciones.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Borrar un fallo transitorio</b> convierte la entrega en como-mucho-una-vez y la
+      pérdida deja de verse en P4. <b>Dejar un veneno en la cola</b> congela su expediente
+      cinco minutos y G-05 reporta un hueco que no existe. El duplicado es un problema que
+      el inbox resuelve; la pérdida silenciosa no la resuelve nadie.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">04 · G-07</div>
+      <h2>Por qué el veneno se saca a mano en vez de dejarlo al redrive</h2>
+      <p>
+        SQS ya tiene redrive automático: a las cinco recepciones manda el mensaje solo a la
+        DLQ. Usarlo para el veneno sería lo cómodo. El diagrama es la razón por la que no.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 330" role="img"
+             aria-label="Comparación entre sacar el veneno a mano, que libera el grupo FIFO al instante, y dejarlo al redrive automático, que bloquea la cabeza del grupo durante cinco minutos.">
+          <defs>
+            <marker id="f4-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <text x="16" y="22" font-family="var(--sans)" font-size="11" fill="var(--ink-3)"
+                letter-spacing="1">UN GRUPO FIFO = UN EXPEDIENTE · MessageGroupId = rpf_id</text>
+
+          <!-- ── izquierda: a mano ── -->
+          <text x="16" y="52" font-family="var(--sans)" font-size="13" fill="var(--claro)">A mano · lo que hace C4</text>
+          <rect x="16" y="64" width="60" height="40" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="46" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--alarma)">☠</text>
+          <rect x="80" y="64" width="60" height="40" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="110" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--claro)">seq 2</text>
+          <rect x="144" y="64" width="60" height="40" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="174" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--claro)">seq 3</text>
+          <rect x="208" y="64" width="60" height="40" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="238" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--claro)">seq 4</text>
+
+          <path d="M 46 108 L 46 140 L 300 140" fill="none" stroke="var(--alarma)" stroke-width="1.4"
+                marker-end="url(#f4-punta)" color="var(--alarma)"/>
+          <text x="176" y="133" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--alarma)">SendMessage a la DLQ + Delete</text>
+          <rect x="304" y="122" width="70" height="34" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="339" y="144" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--alarma)">DLQ</text>
+
+          <rect x="16" y="164" width="358" height="30" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="195" y="184" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--claro)">el grupo sigue entregando · 0 ms de bloqueo</text>
+
+          <!-- divisor -->
+          <line x1="440" y1="40" x2="440" y2="300" stroke="currentColor" stroke-opacity="0.25"/>
+
+          <!-- ── derecha: redrive ── -->
+          <text x="466" y="52" font-family="var(--sans)" font-size="13" fill="var(--alarma)">Al redrive automático · lo que NO hace</text>
+          <rect x="466" y="64" width="60" height="40" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="496" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--alarma)">☠</text>
+          <rect x="530" y="64" width="60" height="40" rx="3" fill="none" stroke="var(--nada)" stroke-dasharray="4 3"/>
+          <text x="560" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--nada)">seq 2</text>
+          <rect x="594" y="64" width="60" height="40" rx="3" fill="none" stroke="var(--nada)" stroke-dasharray="4 3"/>
+          <text x="624" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--nada)">seq 3</text>
+          <rect x="658" y="64" width="60" height="40" rx="3" fill="none" stroke="var(--nada)" stroke-dasharray="4 3"/>
+          <text x="688" y="89" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--nada)">seq 4</text>
+
+          <!-- cinco recepciones -->
+          <g font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">
+            <rect x="466" y="124" width="48" height="22" rx="2" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+            <text x="490" y="139" text-anchor="middle">60 s</text>
+            <rect x="518" y="124" width="48" height="22" rx="2" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+            <text x="542" y="139" text-anchor="middle">60 s</text>
+            <rect x="570" y="124" width="48" height="22" rx="2" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+            <text x="594" y="139" text-anchor="middle">60 s</text>
+            <rect x="622" y="124" width="48" height="22" rx="2" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+            <text x="646" y="139" text-anchor="middle">60 s</text>
+            <rect x="674" y="124" width="48" height="22" rx="2" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+            <text x="698" y="139" text-anchor="middle">60 s</text>
+          </g>
+          <line x1="726" y1="135" x2="790" y2="135" stroke="var(--alarma)" stroke-width="1.4"
+                marker-end="url(#f4-punta)" color="var(--alarma)"/>
+          <rect x="794" y="118" width="70" height="34" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="829" y="140" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--alarma)">DLQ</text>
+
+          <rect x="466" y="164" width="398" height="30" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="665" y="184" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--alarma)">el expediente entero congelado · 5 minutos</text>
+
+          <!-- consecuencia -->
+          <rect x="466" y="212" width="398" height="66" rx="3" fill="none" stroke="var(--alarma)" stroke-dasharray="5 4"/>
+          <text x="665" y="236" text-anchor="middle" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">y G-05 vería un hueco de sequence</text>
+          <text x="665" y="256" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">falso positivo en la única métrica</text>
+          <text x="665" y="272" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">que afirma que el orden se mantuvo</text>
+
+          <text x="16" y="236" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">Se publica en la DLQ ANTES de borrar:</text>
+          <text x="16" y="254" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">al revés, un crash entre las dos</text>
+          <text x="16" y="270" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">operaciones pierde la evidencia.</text>
+        </svg>
+      </div>
+      <figcaption>
+        En FIFO, un mensaje sin borrar bloquea la cabeza de su grupo. Como
+        <code>MessageGroupId = rpf_id</code>, el grupo <em>es</em> el expediente: dejar el
+        veneno al redrive cuesta cinco recepciones × 60 s de visibility con toda la
+        secuencia parada.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y por eso el conteo no vive en la cola.</b> Al republicar se conserva el
+      <code>payload_hash</code> original, así que el mismo veneno repetido se descarta en
+      silencio durante cinco minutos — deseable, porque no duplica la evidencia, pero
+      implica que <strong>la profundidad de la DLQ no sirve para contar</strong>. El conteo
+      vive en la tabla <code>descartes</code>, y con eso P4 cierra:
+      <code>ofrecidos = persistidos + duplicados + descartes + en_vuelo</code>.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">05 · MEDICIÓN</div>
+      <h2>La marca que hubo que añadir para no culpar al inocente</h2>
+      <p>
+        <code>07-medicion</code> define <code>e7</code> como «C4 recibe el mensaje». Pero
+        un <code>ReceiveMessage</code> devuelve hasta diez mensajes en la misma respuesta:
+        llegan todos en el mismo instante y <strong>se procesan en serie</strong>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 340" role="img"
+             aria-label="Los diez mensajes de un lote llegan en el mismo instante pero se procesan en serie, de modo que el intervalo entre la llegada y el descifrado del último incluye el trabajo de los nueve anteriores. La marca e7b separa la espera del descifrado.">
+          <defs>
+            <marker id="f5-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- eje -->
+          <line x1="100" y1="40" x2="100" y2="200" stroke="var(--claro)" stroke-width="2"/>
+          <text x="94" y="34" text-anchor="end" font-family="var(--mono)" font-size="11" fill="var(--claro)">e7</text>
+          <text x="94" y="50" text-anchor="end" font-family="var(--sans)" font-size="10.5" fill="var(--ink-3)">llegó el lote</text>
+          <line x1="100" y1="216" x2="800" y2="216" stroke="currentColor" stroke-opacity="0.4"/>
+          <text x="800" y="234" text-anchor="end" font-family="var(--sans)" font-size="10.5" fill="var(--ink-3)">tiempo →</text>
+
+          <!-- filas de mensajes -->
+          <g font-family="var(--mono)" font-size="10">
+            <text x="94" y="72" text-anchor="end" fill="var(--ink-3)">msg 1</text>
+            <rect x="100" y="62" width="60" height="14" rx="2" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="170" y="72" fill="var(--claro)">e7b aquí — no esperó nada</text>
+
+            <text x="94" y="102" text-anchor="end" fill="var(--ink-3)">msg 2</text>
+            <rect x="100" y="92" width="60" height="14" rx="2" fill="none" stroke="var(--nada)" stroke-dasharray="3 3"/>
+            <rect x="160" y="92" width="60" height="14" rx="2" fill="var(--claro-soft)" stroke="var(--claro)"/>
+
+            <text x="94" y="132" text-anchor="end" fill="var(--ink-3)">msg 3</text>
+            <rect x="100" y="122" width="120" height="14" rx="2" fill="none" stroke="var(--nada)" stroke-dasharray="3 3"/>
+            <rect x="220" y="122" width="60" height="14" rx="2" fill="var(--claro-soft)" stroke="var(--claro)"/>
+
+            <text x="94" y="162" text-anchor="end" fill="var(--ink-3)">⋮</text>
+
+            <text x="94" y="192" text-anchor="end" fill="var(--ink-3)">msg 10</text>
+            <rect x="100" y="182" width="540" height="14" rx="2" fill="none" stroke="var(--nada)" stroke-dasharray="3 3"/>
+            <rect x="640" y="182" width="60" height="14" rx="2" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          </g>
+
+          <line x1="640" y1="176" x2="640" y2="204" stroke="var(--claro)" stroke-width="1.5"/>
+          <text x="646" y="172" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">e7b del msg 10</text>
+
+          <!-- lo que se mediría mal -->
+          <path d="M 100 260 L 700 260" fill="none" stroke="var(--alarma)" stroke-width="1.5"
+                marker-end="url(#f5-punta)" color="var(--alarma)"/>
+          <text x="400" y="253" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--alarma)">
+            e7 → e8 del msg 10, si no existiera e7b</text>
+          <text x="400" y="278" text-anchor="middle" font-family="var(--sans)" font-size="11.5" fill="var(--ink-2)">
+            «descifrar tarda 400 ms» — y descifrar es lo que MENOS tarda</text>
+
+          <!-- leyenda de barras -->
+          <g font-family="var(--sans)" font-size="11" fill="var(--ink-2)">
+            <rect x="100" y="300" width="24" height="12" rx="2" fill="none" stroke="var(--nada)" stroke-dasharray="3 3"/>
+            <text x="132" y="310">espera en el lote — saturación, no trabajo</text>
+            <rect x="440" y="300" width="24" height="12" rx="2" fill="var(--claro-soft)" stroke="var(--claro)"/>
+            <text x="472" y="310">procesar este mensaje — trabajo de verdad</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        La espera no es un artefacto de medición: es latencia real y pertenece al extremo a
+        extremo. Lo que no puede es atribuirse al criptográfico. <code>e7→e7b</code> es la
+        cola interna de C4; <code>e7b→e8</code> es el descifrado.
+      </figcaption>
+    </figure>
+
+    <div class="prosa">
+      <h3>Lo que salió al separarlo</h3>
+    </div>
+
+    <div class="cifras">
+      <div class="cifra"><span class="v">402 ms</span><span class="k">e7 → e10 medio</span></div>
+      <div class="cifra"><span class="v" style="color:var(--alarma)">358 ms</span><span class="k">espera en lote</span></div>
+      <div class="cifra"><span class="v">18 ms</span><span class="k">descifrado</span></div>
+      <div class="cifra"><span class="v">18 ms</span><span class="k">verificación</span></div>
+      <div class="cifra"><span class="v">7 ms</span><span class="k">persistencia</span></div>
+    </div>
+
+    <div class="nota calma">
+      <b>La letra pequeña de los 18 ms.</b> Son medias sobre 12 eventos que cargan con la
+      primera llamada del proceso: un <code>Decrypt</code> y un <code>GetPublicKey</code>
+      repartidos entre todos. En régimen, verificar Ed25519 en local es
+      <strong>sub-milisegundo</strong>. Con corridas largas el sesgo desaparece solo; con
+      corridas cortas hay que decirlo, o el número miente.
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead><tr><th>Tramo</th><th>Si sube, el sospechoso es</th></tr></thead>
+        <tbody>
+          <tr><td class="n">e6 → e7</td><td>La cola: C4 no da abasto y se está acumulando</td></tr>
+          <tr><td class="n">e7 → e7b</td><td><strong>C4 por dentro</strong>: el lote se procesa en serie y algo tarda</td></tr>
+          <tr><td class="n">e7b → e8</td><td>KMS <code>Decrypt</code> — o que el caché de data key no acierta</td></tr>
+          <tr><td class="n">e8 → e9</td><td>Nada de red: es CPU. Solo sube con payloads mucho mayores</td></tr>
+          <tr><td class="n">e9 → e10</td><td>Postgres: fsync, pool agotado, o las proyecciones</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="nota">
+      <b>El síntoma que engaña.</b> En una cola FIFO hay un tope de 20.000 mensajes en
+      vuelo. Si C4 se atrasa lo suficiente, la cola <strong>deja de entregar</strong> con
+      <code>OverLimit</code> y parece que se vació — cuando en realidad está llena.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">06 · G-03</div>
+      <h2>La idempotencia es una restricción de clave primaria</h2>
+      <p>
+        La entrega es al-menos-una-vez: <strong>los duplicados no son una anomalía, son
+        parte del contrato</strong>. El relay de C3 reintenta y eso es funcionamiento
+        normal.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 300" role="img"
+             aria-label="Un mensaje reentregado por SQS choca con la clave primaria del inbox: se cuenta como duplicado y el journal no crece.">
+          <defs>
+            <marker id="f6-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- primera entrega -->
+          <text x="16" y="24" font-family="var(--sans)" font-size="11" fill="var(--ink-3)" letter-spacing="1">PRIMERA ENTREGA</text>
+          <rect x="16" y="36" width="150" height="40" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="91" y="61" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">payload_hash 9f72…</text>
+          <line x1="170" y1="56" x2="256" y2="56" stroke="var(--claro)" stroke-width="1.5" marker-end="url(#f6-punta)" color="var(--claro)"/>
+          <rect x="260" y="30" width="230" height="52" rx="3" fill="var(--raised)" stroke="var(--claro)"/>
+          <text x="375" y="52" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">INSERT … ON CONFLICT</text>
+          <text x="375" y="69" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--claro)">RETURNING → 9f72…</text>
+          <line x1="494" y1="56" x2="580" y2="56" stroke="var(--claro)" stroke-width="1.5" marker-end="url(#f6-punta)" color="var(--claro)"/>
+          <rect x="584" y="30" width="140" height="52" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="654" y="52" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--ink)">se proyecta</text>
+          <text x="654" y="69" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--claro)">journal +1</text>
+
+          <!-- reentrega -->
+          <text x="16" y="140" font-family="var(--sans)" font-size="11" fill="var(--ink-3)" letter-spacing="1">REENTREGA · vence el visibility timeout, 60 s</text>
+          <rect x="16" y="152" width="150" height="40" rx="3" fill="var(--panel)" stroke="var(--nada)" stroke-dasharray="4 3"/>
+          <text x="91" y="177" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--ink-2)">payload_hash 9f72…</text>
+          <line x1="170" y1="172" x2="256" y2="172" stroke="var(--nada)" stroke-width="1.5" marker-end="url(#f6-punta)" color="var(--nada)"/>
+          <rect x="260" y="146" width="230" height="52" rx="3" fill="var(--raised)" stroke="var(--nada)"/>
+          <text x="375" y="168" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">INSERT … ON CONFLICT</text>
+          <text x="375" y="185" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--nada)">RETURNING → vacío</text>
+          <line x1="494" y1="172" x2="580" y2="172" stroke="var(--nada)" stroke-width="1.5" marker-end="url(#f6-punta)" color="var(--nada)"/>
+          <rect x="584" y="146" width="140" height="52" rx="3" fill="none" stroke="var(--nada)" stroke-dasharray="4 3"/>
+          <text x="654" y="168" text-anchor="middle" font-family="var(--sans)" font-size="12" fill="var(--ink-2)">se CUENTA</text>
+          <text x="654" y="185" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">duplicados +1</text>
+
+          <!-- el libro -->
+          <rect x="260" y="226" width="464" height="54" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
+          <text x="492" y="248" text-anchor="middle" font-family="var(--sans)" font-size="13" fill="var(--ink)">journal · 1 asiento</text>
+          <text x="492" y="268" text-anchor="middle" font-family="var(--sans)" font-size="11.5" fill="var(--claro)">append-only: no creció, y no hay forma de que crezca</text>
+          <path d="M 654 200 L 654 220" fill="none" stroke="var(--nada)" stroke-width="1.4" stroke-dasharray="3 3"/>
+          <path d="M 654 84 L 654 220" fill="none" stroke="var(--claro)" stroke-width="1.4" opacity="0.35"/>
+        </svg>
+      </div>
+      <figcaption>
+        <code>payload_hash</code> es <code>PRIMARY KEY</code>, y ese detalle <em>es</em> la
+        idempotencia. Se recalcula a partir del payload, no se cree el declarado: aceptar
+        el declarado dejaría la idempotencia en manos del emisor.
+      </figcaption>
+    </figure>
+
+    <div class="nota calma">
+      <b>Los duplicados se cuentan, no se ignoran.</b> El conteo es la prueba de que el
+      contrato de al-menos-una-vez está ocurriendo de verdad y de que el inbox lo está
+      absorbiendo. Tratarlos como error los alarmaría, y el ruido taparía los descartes que
+      sí importan.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">07 · G-04</div>
+      <h2>Un evento, cinco proyecciones, una sola transacción</h2>
+      <p>
+        El inbox dice <em>que</em> el evento llegó. Los cinco schemas son lo que lo
+        convierte en estado consultable.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 330" role="img"
+             aria-label="Dentro de una sola transacción, el inbox y las cinco proyecciones se escriben juntos; el journal es append-only y las otras cuatro son upserts acumulativos.">
+          <defs>
+            <marker id="f7-punta" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- caja transaccion -->
+          <rect x="16" y="30" width="848" height="216" rx="4" fill="none" stroke="var(--claro)"
+                stroke-dasharray="6 4"/>
+          <text x="32" y="22" font-family="var(--mono)" font-size="11" fill="var(--claro)">BEGIN</text>
+          <text x="848" y="266" text-anchor="end" font-family="var(--mono)" font-size="11" fill="var(--claro)">COMMIT → e10</text>
+
+          <!-- inbox -->
+          <rect x="40" y="98" width="164" height="76" rx="3" fill="var(--raised)" stroke="var(--claro)" stroke-width="1.6"/>
+          <text x="122" y="124" text-anchor="middle" font-family="var(--sans)" font-size="13" fill="var(--ink)">inbox</text>
+          <text x="122" y="142" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--claro)">payload_hash PK</text>
+          <text x="122" y="159" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">e7 · e7b · e8 · e9 · e10</text>
+
+          <!-- fan out -->
+          <g stroke="var(--claro)" stroke-width="1.3" fill="none" color="var(--claro)">
+            <path d="M 208 136 L 250 136 L 250 62  L 300 62"  marker-end="url(#f7-punta)"/>
+            <path d="M 208 136 L 250 136 L 250 106 L 300 106" marker-end="url(#f7-punta)"/>
+            <path d="M 208 136 L 250 136 L 250 150 L 300 150" marker-end="url(#f7-punta)"/>
+            <path d="M 208 136 L 250 136 L 250 194 L 300 194" marker-end="url(#f7-punta)"/>
+            <path d="M 208 136 L 250 136 L 250 236 L 300 236" marker-end="url(#f7-punta)"/>
+          </g>
+
+          <g font-family="var(--sans)" font-size="12.5">
+            <rect x="304" y="44" width="220" height="36" rx="3" fill="var(--claro-soft)" stroke="var(--claro)" stroke-width="1.6"/>
+            <text x="318" y="67" fill="var(--ink)">journal</text>
+            <text x="510" y="67" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--claro)">INSERT · append-only</text>
+
+            <rect x="304" y="88" width="220" height="36" rx="3" fill="var(--panel)" stroke="currentColor" stroke-opacity="0.45"/>
+            <text x="318" y="111" fill="var(--ink)">case_header</text>
+            <text x="510" y="111" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">UPSERT · LEAST/GREATEST</text>
+
+            <rect x="304" y="132" width="220" height="36" rx="3" fill="var(--panel)" stroke="currentColor" stroke-opacity="0.45"/>
+            <text x="318" y="155" fill="var(--ink)">shared_map</text>
+            <text x="510" y="155" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">UPSERT · por party_id</text>
+
+            <rect x="304" y="176" width="220" height="36" rx="3" fill="var(--panel)" stroke="currentColor" stroke-opacity="0.45"/>
+            <text x="318" y="199" fill="var(--ink)">policy_registry</text>
+            <text x="510" y="199" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">UPSERT · tipo + versión</text>
+
+            <rect x="304" y="220" width="220" height="36" rx="3" fill="var(--panel)" stroke="currentColor" stroke-opacity="0.45"/>
+            <text x="318" y="243" fill="var(--ink)">key_registry</text>
+            <text x="510" y="243" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--ink-3)">UPSERT · por key_id</text>
+          </g>
+
+          <!-- glosas -->
+          <g font-family="var(--sans)" font-size="11.5" fill="var(--ink-2)">
+            <text x="556" y="60">el libro. un INSERT, nunca un UPDATE</text>
+            <text x="556" y="104">reprocesar no puede hacer retroceder</text>
+            <text x="556" y="120" font-size="11" fill="var(--ink-3)">sequence_max</text>
+            <text x="556" y="152">quién opera con quién, sin saber</text>
+            <text x="556" y="168" font-size="11" fill="var(--ink-3)">quién es ninguno de los dos</text>
+            <text x="556" y="196">qué versiones circulan ahora mismo</text>
+            <text x="556" y="238">qué llave cubrió qué eventos —</text>
+            <text x="556" y="254" font-size="11" fill="var(--ink-3)">la tabla del día que una se rote</text>
+          </g>
+
+          <!-- descartes fuera -->
+          <rect x="304" y="284" width="220" height="34" rx="3" fill="var(--alarma-soft)" stroke="var(--alarma)"/>
+          <text x="318" y="306" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">descartes</text>
+          <text x="510" y="306" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--alarma)">fuera de la transacción</text>
+          <text x="556" y="300" font-family="var(--sans)" font-size="11.5" fill="var(--ink-2)">lo que nunca llegó a asentarse,</text>
+          <text x="556" y="316" font-family="var(--sans)" font-size="11.5" fill="var(--ink-2)">para que P4 cierre igual</text>
+        </svg>
+      </div>
+      <figcaption>
+        Inbox y proyección van juntos por la misma razón por la que el outbox de C3 va en
+        la transacción de negocio: separarlos deja un <code>payload_hash</code> marcado como
+        visto y un journal sin el asiento, y el reintento lo vería como duplicado y no lo
+        escribiría <em>nunca</em>.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>El evento quedaría contado en P4 y ausente del libro.</b> Es la peor combinación
+      posible, porque los números dicen que está.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="paso">08 · LA PRUEBA</div>
+      <h2>Seis venenos, uno por guarda</h2>
+      <p>
+        El punta a punta corre contra KMS, la cola y Postgres reales. Publica 12
+        documentos legítimos y seis venenos, y comprueba que <strong>cada uno cayó por su
+        motivo</strong>: que el total cuadre no basta, porque dos venenos rechazados por
+        el motivo equivocado darían el mismo total y esconderían que una de las dos guardas
+        no funciona.
+      </p>
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead><tr><th>Veneno</th><th>Motivo</th><th>Qué guarda ataca</th></tr></thead>
+        <tbody>
+          <tr><td>el cuerpo no es un sobre</td><td class="n">no_es_sobre</td><td>alguien más publicando en la cola</td></tr>
+          <tr><td>ciphertext alterado</td><td class="n">no_descifra</td><td>el tag de GCM</td></tr>
+          <tr><td>descifra pero la firma no cubre el documento</td><td class="n">firma_invalida</td><td><strong>inyección con la llave de cifrado</strong></td></tr>
+          <tr><td><code>key_id</code> fuera de la lista blanca</td><td class="n">llave_no_aceptada</td><td>firmado con otra llave</td></tr>
+          <tr><td><code>payload_hash</code> declarado ≠ recalculado</td><td class="n">dedup_no_coincide</td><td>idempotencia, o deriva del JCS</td></tr>
+          <tr><td><code>rpf_id</code> que no es UUID</td><td class="n">rpf_id_invalido</td><td>reintento infinito por dato inválido</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><span class="c">── resultado ──</span>
+<span class="s">✔</span> P4 · llegaron los 12 legítimos (inbox=12)
+<span class="s">✔</span> el journal tiene 12 asientos · todos con e10
+<span class="s">✔</span> G-05 · sin huecos de sequence
+<span class="s">✔</span> G-07 · 6 descartes anotados, los 6 con alarma
+<span class="s">✔</span> nada quedó para reintentar
+<span class="s">✔</span> el payload guardado es <span class="k">byte a byte el firmado</span> (12/12)
+
+<span class="c">── reentrega real de SQS, 65 s de espera ──</span>
+<span class="s">✔</span> sigue habiendo UNA fila de inbox
+<span class="s">✔</span> el duplicado se contó (duplicados=1)
+<span class="s">✔</span> el journal NO duplicó el asiento</pre>
+
+    <div class="prosa">
+      <h3>El test que más importa no prueba C4</h3>
+      <p>
+        Compara <code>c4/src/comun/jcs.ts</code> con
+        <code>orquestador/src/generador/jcs.ts</code> y falla si divergen. Son la misma
+        implementación duplicada, y si una deriva el síntoma no es «hay dos copias»: es que
+        <strong>la firma deja de verificar y C4 manda todo a la DLQ con alarma</strong> —
+        indistinguible de un intento de inyección.
+      </p>
+      <p>
+        Su primera versión anclaba las rutas en <code>__dirname</code>, que compilado
+        apunta dentro de <code>dist-test/</code>. No resolvían, y el test <em>se saltaba en
+        silencio</em> — que es exactamente la forma en que un guardia de deriva deja de
+        guardar.
+      </p>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="prosa">
+      <div class="eyebrow">Lo que C4 todavía no hace</div>
+      <h2>Dicho de entrada, para que nadie lo descubra en la demo</h2>
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead><tr><th>Hueco</th><th>Consecuencia</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>No hay <code>/health</code></td>
+            <td><code>BdService.viva()</code> existe y nadie lo llama: sin servidor HTTP no hay dónde colgarlo</td>
+          </tr>
+          <tr>
+            <td>No hay backpressure</td>
+            <td>Si Postgres se ralentiza, C4 sigue pidiendo lotes de 10. Con 20.000 en vuelo la cola deja de entregar y <strong>parece</strong> que se vació</td>
+          </tr>
+          <tr>
+            <td><code>shared_map</code> cuenta expedientes por <code>sequence &lt;= 1</code></td>
+            <td>Si un expediente empezara en otro número, el conteo de expedientes se desvía; el de eventos no</td>
+          </tr>
+          <tr>
+            <td>La alarma no distingue los dos casos por profundidad</td>
+            <td>Ambos caminos terminan en la misma DLQ. La distinción está en el atributo <code>motivo</code> y en <code>descartes.alarma</code></td>
+          </tr>
+          <tr>
+            <td>El JCS sigue duplicado</td>
+            <td>Hay un test que falla si divergen, pero la solución de verdad es un paquete compartido — y eso espera a que C3 exista</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    PoC RPF Proof Ledger · track <span class="mono">G</span> · el operador neutro.
+    Documentación completa en <span class="mono">c4/docs/</span>; el diseño del track, en
+    <span class="mono">docs/05-contenedor-c4.md</span>. Los números provienen de una corrida
+    real contra KMS, SQS FIFO y Postgres 16 — 12 eventos legítimos y 6 venenos.
+  </footer>
+
+</div>
+</body>
+</html>

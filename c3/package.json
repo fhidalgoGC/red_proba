@@ -1,0 +1,35 @@
+{
+  "name": "c3",
+  "version": "0.1.0",
+  "description": "Contenedor del cliente (track C). Por ahora: solo el receptor.",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "DATABASE_URL=${DATABASE_URL:-postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4} SQS_QUEUE_URL=${SQS_QUEUE_URL:-https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-eventos.fifo} AWS_REGION=${AWS_REGION:-us-west-2} KMS_SIGN_KEY_ID=${KMS_SIGN_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/9c2ba3c2-e111-463a-871f-c1ee048dbefa} KMS_HMAC_KEY_ID=${KMS_HMAC_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/83695b89-189e-479d-800a-9bda424ecabd} KMS_ENCRYPT_KEY_ID=${KMS_ENCRYPT_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/f8940502-057c-42b3-9a09-8d40cf673f68} C3_ESQUEMA=c3   C3_PORT=3001 TENANT_ID=tenant-01 node dist/main.js",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "prestart": "tsc",
+    "prestart:2": "tsc",
+    "start:2": "DATABASE_URL=${DATABASE_URL:-postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4} SQS_QUEUE_URL=${SQS_QUEUE_URL:-https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-eventos.fifo} AWS_REGION=${AWS_REGION:-us-west-2} KMS_SIGN_KEY_ID=${KMS_SIGN_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/9c2ba3c2-e111-463a-871f-c1ee048dbefa} KMS_HMAC_KEY_ID=${KMS_HMAC_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/83695b89-189e-479d-800a-9bda424ecabd} KMS_ENCRYPT_KEY_ID=${KMS_ENCRYPT_KEY_ID:-arn:aws:kms:us-west-2:276076558677:key/f8940502-057c-42b3-9a09-8d40cf673f68} C3_ESQUEMA=c3b  C3_PORT=3002 TENANT_ID=tenant-02 node dist/main.js",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "e2e:kms": "tsc -p tsconfig.test.json && node dist-test/test/e2e-kms.js",
+    "start:local": "DATABASE_URL=${DATABASE_URL:-postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4} SQS_QUEUE_URL=${SQS_QUEUE_URL:-https://sqs.us-west-2.amazonaws.com/276076558677/rpf-one-eventos.fifo} AWS_REGION=${AWS_REGION:-us-west-2} C3_ESQUEMA=c3_local C3_PORT=3001 TENANT_ID=tenant-01 node dist/main.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.1121.0",
+    "@aws-sdk/client-sqs": "^3.1121.0",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/schedule": "^12.0.1",
+    "@nestjs/swagger": "^11.4.7",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

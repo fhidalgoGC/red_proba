@@ -1,0 +1,89 @@
+{
+  "lote_id": "fbf132f5-f21c-4447-81e5-9df6adb9e6fe",
+  "tenant_id": "tenant-01",
+  "documentos": [
+    {
+      "rpf_id": "781f6545-f8ac-47f3-a5ba-2f1eb7381e19",
+      "event_id": "4c41c216-7039-447e-bfd6-29434a4b9e0d",
+      "event_type": "fiscal.document.issued",
+      "schema_version": "1.4.0",
+      "occurred_at": "2026-08-31T01:17:09.406Z",
+      "sequence": 1,
+      "party_id": "hmac:0000000000000000000000000000000000000000000000000000000000000000",
+      "participant": {
+        "cnpj": "48004537900991",
+        "ie": "734378628906",
+        "legal_name": "Metalurgica Paulista Ltda",
+        "municipality_code": "3550308",
+        "uf": "SP"
+      },
+      "counterparty": {
+        "cnpj": "83548261929099",
+        "ie": "002077347",
+        "legal_name": "Distribuidora Sul SA",
+        "uf": "SP"
+      },
+      "document": {
+        "model": "55",
+        "series": "003",
+        "number": "001000195",
+        "access_key": "41566566907846197112271444893860680420910516",
+        "issued_at": "2026-01-01T00:00:00.000Z",
+        "operation": "saida",
+        "cfop": "5102",
+        "nature": "Venda de mercadoria de terceiros"
+      },
+      "totals": {
+        "items_count": 2,
+        "products": "17993.63",
+        "discount": "359.87",
+        "freight": "168.21",
+        "tax_base": "17801.97",
+        "icms": "2136.24",
+        "ipi": "899.68",
+        "pis": "293.73",
+        "cofins": "1352.95",
+        "total": "17801.97"
+      },
+      "items": [
+        {
+          "line": 1,
+          "code": "MP-1195-B",
+          "description": "Bobina aco zincado 1.20mm",
+          "ncm": "72104900",
+          "unit": "KG",
+          "quantity": "1861.257",
+          "unit_price": "41.6254",
+          "total": "7747.56"
+        },
+        {
+          "line": 2,
+          "code": "MP-6602-D",
+          "description": "Tubo redondo 50.8x2.25mm",
+          "ncm": "73063000",
+          "unit": "MT",
+          "quantity": "1405.370",
+          "unit_price": "72.9066",
+          "total": "10246.07"
+        }
+      ],
+      "transport": {
+        "mode": "cif",
+        "carrier_cnpj": "00516548194516",
+        "vehicle_plate": "BRA2E19",
+        "gross_weight": "1840.94"
+      },
+      "payment": {
+        "method": "boleto",
+        "installments": 2,
+        "due_first": "2026-09-28"
+      },
+      "origin": {
+        "system": "erp-connector",
+        "version": "3.11.2",
+        "environment": "poc"
+      },
+      "padding": "W11WasgqNofchFHJPrOQVWDdUI22wxRXy2nJQ6Z80/f/0hexgpkQ/NTxKYEt5dN2Z79UGbe9ShV0D2U3ucwcf/Isu+hhltTdCEm8Ol6TQhKhICY8GMzSc2Q93V+KqJbT3b9LoNoHV14rSaWOlOCQAsDH4CbOvN1dRlld1HJM/3H5QULMzwqSg0AP2hcJSVP0cdcvYl/Vg/oMfK4NYdcmobrHKTrszEQnjrtFXMS48cCOmiWd0CvnAeCS2B6IEF9UAibqnfc6GzgPTTqnooh1Am/IAJ9KGjUdNdlDvtdP89+Aj+rpc1Tir9lWgrnaZCZtI9qFpssMxX5OtO1ToYVbfoawRJlqmxppinWAhZ53NwiTSlivnQ59ZG0g+O4gEqTgrYMtEARYb4OawWuTxaEyQ0/4RUU4SJyj+SmHs0lO3stM3xzKrtW0ARzu6kT3aEjtIaMe44v9/7xuyzCguH7Fw/elKi4NssH/yvMAp76Fh/dTE4674SFyxqunQ4iLaP9sB6KQyQi+o0rURHR/VmjxFVeVue1IcYiaIPM+hQ8FIXX0N1Pe0+B+MsbBges+RW6D3Wz3cm43Z23sBdi0NFQ"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+.terraform/
+*.tfplan
+.plan.tfplan
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+estado.auto.tfvars
+node_modules/

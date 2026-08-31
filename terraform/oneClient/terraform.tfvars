@@ -1,0 +1,31 @@
+# ── oneClient · 1 tenant ──────────────────────────────────────────────────
+#
+# La UNICA diferencia con 50client. El resto del codigo es el mismo.
+tenants = ["01"]
+
+region      = "us-west-2"
+name_prefix = "rpf-one"
+
+# Identificador de corrida. Bumpear antes de cada carga para poder
+# atribuirle el costo. Sin granularidad horaria: UNA corrida por dia.
+run_id = "2026-08-29-humo"
+
+# ── T-07 · La perilla ─────────────────────────────────────────────────────
+# 0 = infra creada, cero computo, no hace falta que existan las imagenes.
+# 1 = servicios corriendo.
+desired_count = 0
+
+# Tag de las imagenes en ECR. "humo" para las prestadas de la fase 1.
+imagen_tag = "humo"
+
+# ── La perilla que mas mueve el costo fijo ────────────────────────────────
+# Cada interface endpoint pone UNA ENI POR AZ, a ~$0,01/h cada una.
+#   az_count = 2  ->  15 endpoints x 2 = 30 ENIs = ~$7,20/dia
+#   az_count = 1  ->  15 endpoints x 1 = 15 ENIs = ~$3,60/dia
+#
+# Con UN tenant, la segunda AZ no ejercita nada: no hay reparto de carga
+# ni tolerancia a fallo que probar. 50client sube a 2, que es lo que pide
+# el doc. El codigo es identico — cambia el numero, no la estructura.
+az_count = 1
+
+presupuesto_mensual_usd = "50"

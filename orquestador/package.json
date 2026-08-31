@@ -1,0 +1,30 @@
+{
+  "name": "orquestador",
+  "version": "0.1.0",
+  "description": "Driver de carga de la PoC RPF Proof Ledger (track O). Es andamio.",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "ORQ_PORT=3000 node dist/main.js",
+    "start:dev": "nest start --watch",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "volcar": "tsc -p tsconfig.json && node dist/cli/volcar.js",
+    "prestart": "nest build"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/swagger": "^11.4.7",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "undici": "^7.0.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
