@@ -11,7 +11,7 @@ health check queda en verde y nadie se entera de que P4 no se está midiendo.
 | Variable | Qué pasa si falta |
 |---|---|
 | `SQS_QUEUE_URL` | El proceso muere: no tiene de dónde leer |
-| `DATABASE_URL` | El proceso muere: sin base no hay `e10`, y `e10` es el final de la medición |
+| `DATABASE_URL` | El proceso muere: sin base no hay `e10`, y `e10` es el final de la medición. **Base PROPIA de C4** — nunca la de un tenant de C3 |
 
 ## De seguridad
 
@@ -28,6 +28,8 @@ health check queda en verde y nadie se entera de que P4 no se está midiendo.
 | `AWS_REGION` | se deduce de la URL | Región de los clientes SQS y KMS |
 | `C4_ESQUEMA` | `c4` | Esquema de Postgres |
 | `C4_BD_POOL` | `10` | Conexiones del pool |
+| `C4_PORT` | `3003` | Puerto del `/health` (`G-09`). **`0` lo apaga** y C4 vuelve a ser worker puro, sin ningún puerto abierto |
+| `C4_HEALTH_HOST` | `127.0.0.1` | Dónde escucha el health. Solo localhost: en AWS lo consulta el `healthCheck` de la propia task, desde dentro del contenedor. Ponerlo en `0.0.0.0` lo expone a la VPC |
 | `SQS_BATCH_SIZE` | `10` | Mensajes por `ReceiveMessage`. **Tope duro: 10** |
 | `SQS_WAIT_SECONDS` | `20` | Long polling. **Tope duro: 20** |
 | `C4_GUARDAR_PAYLOAD` | `true` | Guardar el documento en claro en el `journal` |

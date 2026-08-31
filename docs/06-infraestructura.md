@@ -6,8 +6,9 @@
 
 | Servicio | Para qué | Dónde | Cuántos |
 |---|---|---|---|
-| **ECS + Fargate** | Dos clusters. Cada tenant aporta dos task definitions y dos services (API + Postgres). En C4, los servicios del operador y su base. | C3, C4, ORQ | ~106 services |
-| **ECR** | Un repo para el API y otro para el Postgres con su init. Una imagen sirve a los 50. | C3, C4 | 2–3 repos |
+| **ECS + Fargate** | Dos clusters. Cada tenant aporta una task definition y un service (el API, con el relay dentro). En C4, el consumidor. Las bases NO son tareas: son RDS. | C3, C4, ORQ | ~52 services |
+| **RDS PostgreSQL** | **Una instancia por tenant** en C3 (`<prefijo>-db-NN`, `db.t4g.micro`) y **una en C4** (`<prefijo>-c4-db`, `db.t4g.medium`, que recibe todo el tráfico). Single-AZ, cifradas, sin backups. | C3, C4 | 51 instancias |
+| **ECR** | Un repo para el API y otro para el consumidor. Una imagen sirve a los 50. | C3, C4 | 2–3 repos |
 
 ### Mensajería
 
@@ -20,7 +21,7 @@
 | Servicio | Para qué | Dónde | Cuántos |
 |---|---|---|---|
 | **KMS** | Cuatro llaves, ninguna hace el trabajo de otra (ver abajo). | C3, C4 | 4 llaves |
-| **Secrets Manager** | Credenciales de Postgres. Uno por tenant, o uno solo si la PoC no ejercita eso. | C3, C4 | 1–51 |
+| **Secrets Manager** | Credenciales de Postgres. Hoy uno solo, compartido por las 51 instancias RDS. | C3, C4 | 1 |
 
 **Las cuatro llaves:**
 
@@ -38,12 +39,11 @@ pero no descifra.
 
 | Servicio | Para qué | Dónde | Cuántos |
 |---|---|---|---|
-| **VPC** | Una por dominio de confianza, CIDR sin traslape. | ×3 | 3 |
+| **VPC** | Una por dominio de confianza: C3 y C4. El orquestador vive dentro de la de C3. | C3, C4 | 2 |
 | **Subnets** | Privada (aplicación) y aislada sin ruta a internet (datos), en 2 AZ. | C3, C4 | 8+ |
-| **Security Groups** | 50 auto-referenciados en C3, 1 en C4, 1 en ORQ. | ×3 | 52 |
+| **Security Groups** | 50 auto-referenciados en C3, `sg-orq` (también en la VPC de C3), 1 en C4. | C3, C4 | 52 |
 | **VPC Endpoints** | Interfaz: `ecr.api`, `ecr.dkr`, `secretsmanager`, `kms`, `logs`, `sqs`. Gateway: S3. Duplicados en C3 y C4. | C3, C4 | 12 + 2 |
-| **Cloud Map** | Namespace privado: `api-NN.poc.local`, `db-NN.poc.local`. | C3 | 1 + 100 |
-| **VPC Peering** | ORQ ↔ C3, más las rutas en ambas tablas. Sin cargo por hora. | ORQ, C3 | 1 |
+| **Cloud Map** | Namespace privado: `api-NN.poc.local`. Las bases no entran: RDS trae su propio endpoint DNS. | C3 | 1 + 50 |
 
 > **El endpoint gateway de S3 es obligatorio** aunque no uses S3 directamente:
 > ECR guarda las capas de imagen en S3, y sin él las descargas fallan aunque
@@ -82,10 +82,9 @@ pero no descifra.
 |---|---|
 | **NAT Gateway** | Reemplazado por VPC endpoints. Con 100+ descargas de imagen sería el gasto de red dominante, y abriría salida a internet donde no debe haberla. |
 | **Internet Gateway** | Nada entra ni sale de internet. |
-| **ALB / NLB** | Los tenants no reciben tráfico externo; el orquestador llega por IP interna vía peering y Cloud Map. |
+| **ALB / NLB** | Los tenants no reciben tráfico externo; el orquestador está en la misma VPC y llega por IP privada vía Cloud Map. |
 | **PrivateLink** | Obligaría a un NLB delante de los 50 API. Descartado por costo y complejidad. |
-| **VPC Peering C3↔C4** | Es la **ausencia** que sostiene D-03. |
-| **RDS** | El diseño real lo usa; la PoC no, por el requisito de que todo vaya en Fargate. Es la desviación documentada. |
+| **VPC Peering** | Ninguno, en ningún par. La ausencia C3↔C4 sostiene D-03; la de ORQ↔C3 desapareció al meter el orquestador dentro de C3. |
 | **EventBridge Scheduler** | El relay y el purgado corren con `@nestjs/schedule` dentro del proceso. |
 
 ---
@@ -100,14 +99,15 @@ y la recuperación se come horas. **Primero en crearse, último en destruirse.**
 
 ### T-02 · Módulo de red
 
-Las tres VPC con CIDR sin traslape, subnets en 2 AZ, VPC endpoints en C3 y C4,
-peering ORQ↔C3 con rutas en ambas tablas, asociación de la zona de Cloud Map a
-la VPC del orquestador.
+Las dos VPC —C3 y C4— con CIDR sin traslape, subnets de aplicación y de datos
+en 2 AZ, VPC endpoints en cada una, DB subnet groups y la zona de Cloud Map en
+C3. **Ni una sola conexión entre VPC**: sin peering, sin Transit Gateway, sin
+PrivateLink. Las tablas de ruta solo tienen la ruta local y el gateway de S3.
 
 ### T-03 · Módulo de seguridad
 
-Los 50 SG por `for_each`, el de C4, el de ORQ. Los roles de IAM. Las cuatro
-llaves de KMS con sus policies.
+Los 50 SG por `for_each`, el de C4 y el del orquestador —este último en la VPC
+de C3—. Los roles de IAM. Las cuatro llaves de KMS con sus policies.
 
 ### T-04 · Módulo de mensajería
 
@@ -116,16 +116,22 @@ reposo.
 
 ### T-05 · Módulo de tenant, parametrizado
 
-`for_each` sobre la lista de 50 → dos task definitions, dos services, registro
-en Cloud Map, log groups. Todo lo que cambia son variables de entorno.
+`for_each` sobre la lista de 50 → una task definition, un service, una
+instancia RDS, registro en Cloud Map y log group por tenant. Todo lo que
+cambia son variables de entorno.
 
 ### T-06 · Módulos de C4 y del orquestador
 
 ### T-07 · Apagar sin destruir
 
 Una variable `desired_count` que puedas llevar a cero con un `apply`. Deja de
-facturar cómputo en segundos y **conserva red, llaves, colas y datos** — que es
-lo que quieres entre corridas.
+facturar cómputo en segundos y **conserva red, llaves y colas** — que es lo que
+quieres entre corridas.
+
+> ⚠ **RDS no escala a cero.** Con `rds_persistente = false` (el defecto), las 51
+> instancias siguen la misma perilla: apagar las **destruye** y con ellas los
+> datos. Ponlo en `true` si los datos tienen que sobrevivir al apagado, y asume
+> el costo continuo.
 
 ```bash
 terraform apply -var 'desired_count=0'   # apagar

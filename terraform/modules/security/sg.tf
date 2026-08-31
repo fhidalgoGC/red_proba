@@ -48,7 +48,9 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_db" {
   description                  = "Postgres solo desde el mismo tenant"
 }
 
-# El API recibe carga del orquestador, que llega por peering.
+# El API recibe carga del orquestador, que ahora corre en la MISMA VPC.
+# Origen = sg-orq, no un CIDR: si manana ORQ cambia de subnet, la regla
+# sigue valiendo.
 resource "aws_vpc_security_group_ingress_rule" "tenant_api_desde_orq" {
   for_each = toset(var.tenants)
 
@@ -144,7 +146,17 @@ resource "aws_vpc_security_group_egress_rule" "c4_db" {
   ip_protocol                  = "tcp"
 }
 
-# ── ORQ ──────────────────────────────────────────────────────────────────
+# ── ORQ · dentro de la VPC de C3 ─────────────────────────────────────────
+#
+# El orquestador NO tiene VPC propia. Es andamio de prueba, no un dominio
+# de confianza: darle una VPC obligaba a un peering, y un peering es una
+# ruta que alguien puede replicar despues hacia C4. Sin VPC de ORQ no hay
+# peering en toda la PoC.
+#
+# Lo que separa a ORQ de los tenants sigue siendo lo mismo que separa a un
+# tenant de otro: el security group. Vive en la VPC de C3 pero en su propio
+# grupo, y ese grupo NO esta en el ingress de 5432 de ningun tenant — no
+# alcanza ninguna base.
 #
 # SIN reglas de entrada, a proposito. Los security groups son stateful: las
 # respuestas de C3 fluyen igual, y C3 no puede INICIAR nada hacia el
@@ -152,8 +164,8 @@ resource "aws_vpc_security_group_egress_rule" "c4_db" {
 # PrivateLink, sin montar un NLB.
 resource "aws_security_group" "orq" {
   name        = "${var.name_prefix}-sg-orq"
-  vpc_id      = var.vpc_ids["orq"]
-  description = "Driver de carga. Sin ingress: C3 no puede iniciar hacia aca."
+  vpc_id      = var.vpc_ids["c3"]
+  description = "Driver de carga, en la VPC de C3. Sin ingress: C3 no puede iniciar hacia aca."
   tags        = { Name = "${var.name_prefix}-sg-orq", Domain = "orq" }
 }
 
@@ -163,16 +175,19 @@ resource "aws_vpc_security_group_egress_rule" "orq_hacia_c3" {
   from_port         = 8080
   to_port           = 8080
   ip_protocol       = "tcp"
-  description       = "HTTP hacia los API de C3 por peering"
+  description       = "HTTP hacia los API de C3, misma VPC"
 }
 
+# Reutiliza los interface endpoints de C3 (ECR, logs). Alcanzarlos por red
+# no le da nada de C4: su task role no tiene sqs ni kms, y la resource
+# policy de la cola solo nombra a los roles de C3 y C4.
 resource "aws_vpc_security_group_egress_rule" "orq_https" {
   security_group_id = aws_security_group.orq.id
-  cidr_ipv4         = var.vpc_cidrs["orq"]
+  cidr_ipv4         = var.vpc_cidrs["c3"]
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
-  description       = "HTTPS hacia los endpoints de ORQ (ECR, logs)"
+  description       = "HTTPS hacia los endpoints de C3 (ECR, logs)"
 }
 
 resource "aws_vpc_security_group_egress_rule" "orq_s3" {

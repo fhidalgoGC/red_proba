@@ -67,6 +67,17 @@ export class ConfigService {
   /** Salir cuando la cola lleve N ciclos vacios seguidos. Para pruebas. */
   readonly salirTrasVaciosSeguidos: number;
 
+  /**
+   * G-09 · puerto del `/health`. 0 lo apaga y C4 vuelve a ser worker puro.
+   *
+   * No convierte a C4 en un API: es la unica forma de preguntarle si SIGUE
+   * viendo su base. Sin esto, un C4 vivo con el Postgres caido saca mensajes
+   * de la cola, no los persiste y P4 da de menos — en silencio.
+   */
+  readonly puertoSalud: number;
+  /** Por defecto localhost: el health es para quien opera, no para la red. */
+  readonly hostSalud: string;
+
   constructor() {
     const url = process.env.SQS_QUEUE_URL?.trim();
     if (!url) {
@@ -104,6 +115,9 @@ export class ConfigService {
 
     this.llaveMensajes = process.env.KMS_ENCRYPT_KEY_ID?.trim() || null;
     this.salirTrasVaciosSeguidos = numero('C4_SALIR_TRAS_VACIOS', 0);
+
+    this.puertoSalud = acotar(numero('C4_PORT', 3003), 0, 65_535);
+    this.hostSalud = process.env.C4_HEALTH_HOST?.trim() || '127.0.0.1';
 
     if (!this.colaUrl.endsWith('.fifo')) {
       this.logger.warn(`la cola no termina en .fifo: ${this.colaUrl}`);

@@ -19,14 +19,14 @@ momento de disparar. El tick solo coge lo que ya está hecho.
 
 ## 1 · El pool, al arrancar el contenedor
 
-Un documento fiscal cuesta construir ~52 atributos, hacer la aritmética en
+Un documento fiscal cuesta construir 70 atributos hoja, hacer la aritmética en
 centavos y canonizar el evento dos veces para ajustar el relleno. A 3.000
 eventos por segundo eso convertiría al orquestador en el cuello de botella, y
 la prueba mediría al generador en vez de a la arquitectura.
 
 Se paga una vez: **1.000 plantillas en 40 ms**, 2,2 MB en memoria.
 
-Cada plantilla sortea su tamaño en `[1536, 3072]` bytes y sus ítems en `[1, 5]`:
+Cada plantilla sortea su tamaño en `[2048, 4096]` bytes y sus ítems en `[1, 5]`:
 
 ```
 1600 B   [ esqueleto 1240 B ][1 ít.][·]
@@ -34,11 +34,14 @@ Cada plantilla sortea su tamaño en `[1536, 3072]` bytes y sus ítems en `[1, 5]
 3046 B   [ esqueleto 1240 B ][ 5 ítems · 164 B c/u ][ relleno ]
 ```
 
-**El piso no es negociable.** El esqueleto del documento fiscal —los ~52
-atributos hoja de [02-payload](../../docs/02-payload.md)— pesa **1.240 bytes
-canónicos sin un solo ítem**, y **1.403 con el ítem mínimo**. Un documento
-fiscal sin ítems no existe, así que 1 KB es inalcanzable sin mutilarlo, y un
-documento mutilado no compara con nada. Mínimo admisible: **1.411**.
+**El piso no es negociable.** El esqueleto del documento fiscal —los **70
+atributos hoja** de [02-payload](../../docs/02-payload.md)— pesa hasta **1.864
+bytes canónicos sin un solo ítem**, y **2.024 con el ítem mínimo**. Un documento
+fiscal sin ítems no existe, así que nada por debajo es alcanzable sin mutilarlo,
+y un documento mutilado no compara con nada. Mínimo admisible: **2.032**.
+
+**El techo tampoco.** 4.096 es el límite de `kms:Sign` con `MessageType: RAW`,
+que es el que exige `ED25519_SHA_512`. A 4.096 la firma entra con margen cero.
 
 El relleno usa alfabeto **base64**: 1 carácter = 1 byte y ninguno necesita
 escape en JSON. Con bytes crudos, una comilla se escaparía al serializar y el
@@ -57,7 +60,7 @@ nunca en caracteres — un acento son dos bytes.
 
 Antes de que salga un solo evento se decide **toda** la aleatoriedad.
 
-### a · La cuota de cada segundo
+### a · La cuota de cada segundo — en PETICIONES
 
 Un entero, garantizado dentro del rango:
 
@@ -67,6 +70,18 @@ N = ⌊min + azar × (max − min + 1)⌋
 seg 1   seg 2   seg 3   seg 4   seg 5
  142     188     123     144     192      ← con request.client = {100, 200}
 ```
+
+⚠ **Son PETICIONES HTTP, no eventos.** Cuántos documentos lleva cada una lo
+decide `events.client`, y se sortea por petición (paso *b bis*). Los dos juntos
+dan el ritmo de eventos:
+
+```
+eventos/s = peticiones/s × documentos por petición
+```
+
+Con `eventos_por_request = 1` —el valor por defecto— los dos números coinciden
+y la diferencia no se nota. En cuanto una petición lleva varios documentos son
+cosas distintas.
 
 **Es una cuota exacta, no una media.** Antes esto sorteaba intervalos
 exponenciales con media λ —un proceso de Poisson de verdad— pero el conteo por
@@ -95,6 +110,21 @@ disparar.
 Con `arrivals: "uniforme"` las posiciones van equiespaciadas — tráfico de
 laboratorio, para contrastar.
 
+### b bis · Cuántos documentos lleva cada petición
+
+Un sorteo **por petición**, no uno por segundo: dos peticiones del mismo
+segundo pueden llevar 3 y 9 documentos.
+
+```
+events.client = {1, 10}   →   [ 5, 2, 9, 1, 7, 3, … ]   una por petición
+```
+
+Un tamaño de lote fijo es tráfico de laboratorio. En producción los lotes
+varían, y el destino tiene que aguantarlo.
+
+Sin `events.client`, el tamaño es fijo y lo pone `envio.eventos_por_request`
+— así las configuraciones que ya existían siguen dando exactamente lo mismo.
+
 ### c · Qué documento le toca
 
 ```
@@ -105,20 +135,22 @@ idx = ⌊azar × 1000⌋   →   [ 417, 92, 806, 233, … ]
 2 KB. Una corrida de 3,5 h a 2.000 ev/s son 25 millones de eventos: 96 MB como
 índices, 54 GB como documentos.
 
-### Los cuatro flujos de PRNG
+### Los cinco flujos de PRNG
 
-Todo lo determinista sale de mulberry32 sembrado, en cuatro flujos separados:
+Todo lo determinista sale de mulberry32 sembrado, en cinco flujos separados:
 
 | Flujo | Decide | Cuándo |
 |---|---|---|
 | `semilla` | ítems, importes, CNPJ, tamaño de cada plantilla | al arrancar |
-| `^ 0x85ebca6b` | la cuota de cada segundo | al planificar |
+| `^ 0x85ebca6b` | cuántas **peticiones** lleva cada segundo | al planificar |
 | `^ 0x9e3779b9` | los instantes dentro del segundo | al planificar |
 | `^ 0x5f3759df` | qué plantilla le toca a cada evento | al planificar |
+| `^ 0xc2b2ae35` | cuántos **documentos** lleva cada petición | al planificar |
 
-Separados a propósito: si compartieran uno, cambiar el rango de `request`
+Separados a propósito: si compartieran uno, cambiar el rango de `events`
 desplazaría también la elección de plantillas y dos corridas con la misma
-semilla dejarían de ser comparables.
+semilla dejarían de ser comparables — que es justo lo que la semilla existe
+para garantizar.
 
 Dos cosas quedan fuera del PRNG. El **relleno** usa `randomBytes` porque su
 contenido no se firma, solo importa su largo. Y la **identidad** usa
@@ -128,8 +160,8 @@ contenido no se firma, solo importa su largo. Y la **identidad** usa
 
 ## 3 · Materializar, cinco segundos antes
 
-Convertir un índice en un documento: coger la plantilla y refrescarle la
-identidad.
+Convertir los índices de una petición en sus documentos: coger cada plantilla y
+refrescarle la identidad.
 
 ```
 SE REFRESCAN                      SE REUSA TAL CUAL
@@ -226,10 +258,17 @@ como `dropped_lag` y se descarta. Arrastrarlo permitiría que un segundo
 superara su cuota máxima con deuda del anterior, y el rango dejaría de
 significar nada.
 
-### El buffer y el emisor
+### Sin buffer: el tamaño lo decide el plan
 
-Los eventos disparados se acumulan en el buffer del tenant y salen al llegar a
-`eventos_por_request`, o antes si llevan esperando `espera_maxima_lote_ms`.
+Cada petición sale entera en su instante, con los documentos que el plan le
+asignó. **No hay buffer que se llene.**
+
+Antes los eventos se acumulaban hasta juntar `eventos_por_request` y se
+soltaban. El problema no era el rendimiento: era que **el instante de salida
+dependía del ritmo de llegada**. Un tenant de la cola larga de Zipf tardaba
+segundos en juntar su lote, y esa espera se medía como latencia del sistema
+cuando era latencia del arnés. Existía `espera_maxima_lote_ms` justamente para
+taparlo — y con el tamaño en el plan deja de hacer falta.
 
 ```ts
 enviar(tenant, documentos, bytes): boolean    // ← booleano, NO una promesa

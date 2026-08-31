@@ -7,9 +7,12 @@
 >
 > 1. **Quién genera**: ya no es C3, es el **orquestador**. Ver
 >    [04-orquestador](04-orquestador.md).
-> 2. **El tamaño ya no es fijo**: se sortea en un rango. El valor único de
->    3.072 bytes sigue siendo el **techo** y sigue siendo expresable
->    (`tamano_bytes: 3072`), pero el defecto es `[1536, 3072]`.
+> 2. **El tamaño ya no es fijo**: se sortea en un rango. El defecto es
+>    `[2048, 4096]`, y un tamaño único sigue siendo expresable
+>    (`tamano_bytes: 4096`).
+> 3. **El documento tiene 70 atributos hoja fijos**, no ~52: se añadieron
+>    dirección postal de las dos partes, el bloque `taxes` (ST, FCP, DIFAL y
+>    retenciones), el acuse `authorization` de la SEFAZ y `references`.
 
 Cada evento pesa **exactamente el tamaño que le tocó** en su forma canónica. El
 contenido es aleatorio y de largo variable; un campo `padding` absorbe la
@@ -17,23 +20,38 @@ diferencia.
 
 | | |
 |---|---|
-| Tamaño canónico | sorteado en `[1536, 3072]`, exacto por evento |
-| Techo de diseño | 3.072 bytes |
-| **Piso real, medido** | **1.403 bytes** — el documento con 1 ítem |
-| Esqueleto sin ítems | 1.240 bytes |
-| Atributos hoja | ~52 |
-| Margen al límite de SQS | 83× en el peor caso (256 KB) |
+| Tamaño canónico | sorteado en `[2048, 4096]`, exacto por evento |
+| Techo | **4.096 bytes** — límite de `kms:Sign` con `MessageType: RAW` |
+| **Piso real, medido** | **2.024 bytes** — el documento con 1 ítem, peor caso |
+| Esqueleto sin ítems | 1.864 bytes (peor caso) |
+| Atributos hoja | **70 fijos**, +8 por ítem |
+| Margen al límite de SQS | 62× en el peor caso (256 KB) |
 
-### Por qué 1 KB es imposible
+### Por qué 2 KB es el piso
 
-El esqueleto del documento fiscal — los ~52 atributos hoja, sin un solo ítem —
-pesa **1.240 bytes canónicos**. Con el ítem mínimo son **1.403**. Y un
+El esqueleto del documento fiscal — los 70 atributos hoja, sin un solo ítem —
+pesa hasta **1.864 bytes canónicos**. Con el ítem mínimo son **2.024**. Y un
 documento fiscal sin ítems no existe.
 
-Pedir plantillas de 1 KB obligaría a mutilar el documento, y **un documento
+Pedir plantillas por debajo obligaría a mutilar el documento, y **un documento
 mutilado no compara con nada**: la firma, el cifrado y el tamaño en cola
-dejarían de representar el caso real. El mínimo admisible es **1.411** (1.403 +
-8 bytes de relleno reservado), y la config lo rechaza por debajo.
+dejarían de representar el caso real. El mínimo admisible es **2.032** (2.024 +
+8 bytes de relleno reservado), y la config lo rechaza por debajo. Los 2 KB del
+defecto entran con 16 bytes de margen.
+
+Los tres números son **medidos, no estimados**, y sobre el peor caso: el
+esqueleto oscila ~25 bytes según el largo de los importes, del número de puerta
+y del nombre de calle. Un piso calibrado con el caso medio pasa mil plantillas y
+revienta en la dos mil, a mitad del arranque del pool.
+
+### Por qué 4 KB es el techo
+
+No es un número de comodidad. `kms:Sign` con `MessageType: RAW` —el que exige
+`ED25519_SHA_512`— acepta mensajes de 0 a 4.096 bytes. A 4.096 bytes canónicos
+la firma entra justa, con **margen cero**. Un byte más y falla en C3, con un
+error de KMS que no apunta al generador. Ir más arriba obliga a
+`ED25519_PH_SHA_512` con digest, y los dos `MessageType` no son intercambiables:
+C3 y C4 tendrían que cambiar a la vez.
 
 ### Por qué variar el tamaño
 
@@ -71,7 +89,7 @@ items             []        line, code, description, ncm, unit, quantity…
 transport         {}        mode, carrier_cnpj, vehicle_plate, gross_weight
 payment           {}        method, installments, due_first
 origin            {}        system, version, environment
-padding           string    relleno base64 para llegar a 3.072
+padding           string    relleno base64 para llegar al tamaño sorteado
 ```
 
 ## Reglas del payload
@@ -118,7 +136,7 @@ longitud.
 ## Ajuste a tamaño exacto
 
 ```ts
-const TARGET = 3072;
+const TARGET = 4096;   // el techo; en la PoC se sortea en [2048, 4096]
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 export function ajustarATamano<T extends object>(
@@ -155,7 +173,7 @@ export function ajustarATamano<T extends object>(
 ```
 
 Validado sobre 5.000 eventos con contenido variable (1 a 5 ítems, importes y
-CNPJ distintos): los 5.000 midieron 3.072 bytes.
+CNPJ distintos): cada uno midió exactamente el tamaño que le tocó.
 
 ## Perillas de carga
 
@@ -198,6 +216,6 @@ MessageDeduplicationId  = payload_hash   // sha256 del canónico EN CLARO (paso 
 
 ### Tamaño en la cola
 
-El payload canónico son 3.072 bytes. El sobre añade firma (64 B), IV, tag,
+El payload canónico son 4.096 bytes en el peor caso. El sobre añade firma (64 B), IV, tag,
 `edk` y el crecimiento de base64 (~33%). El mensaje resultante ronda los
 **4,3 KB**. Sigue muy por debajo del límite de 256 KB.

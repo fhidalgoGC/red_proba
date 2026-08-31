@@ -2,7 +2,9 @@
  * API-01 — Generador de payloads sintéticos.
  *
  * El API recibe { n } y este módulo produce n eventos con la forma del
- * documento fiscal real: ~52 atributos hoja, ~1.4 KB canónicos cada uno.
+ * documento fiscal real. ⚠ ESTE ARCHIVO ES LA VERSIÓN HISTÓRICA (~52 atributos,
+ * ~1.4 KB). El generador vigente vive en orquestador/src/generador/payload.ts:
+ * 70 atributos hoja y tamaño sorteado en [2048, 4096].
  *
  * Reglas que NO se pueden romper (ver D-08):
  *  - Todo importe monetario es STRING, nunca number. Un float pierde

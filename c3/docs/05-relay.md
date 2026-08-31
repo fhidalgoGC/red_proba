@@ -1,0 +1,182 @@
+# 05 · El relay
+
+Lee el outbox y publica en la cola FIFO de C4. Vive en el **mismo proceso** que
+el API: son un `@Interval` y un handler, no dos contenedores (D-07).
+
+---
+
+## Las tres cosas que no son opcionales
+
+### 1 · El `finally`
+
+```ts
+this.ocupado = true;
+try   { do { n = await this.publicarLote(); } while (n > 0); }
+catch (e) { this.logger.error(...); }
+finally   { this.ocupado = false; }      // ⚠
+```
+
+Sin él, una excepción deja `ocupado` en `true` **para siempre**: el relay se
+congela, el health sigue en verde y los eventos se acumulan en silencio. Es el
+peor fallo posible de este archivo porque **no produce ni un solo error
+visible**.
+
+Hay un test que revienta el publicador a propósito y comprueba que el guardia
+queda libre.
+
+### 2 · El drenado
+
+Sin el `do…while`, el techo son 10 mensajes por tick — **20/s por contenedor**
+con `OUTBOX_POLL_MS=500`, sin importar cuánto aguanten la base o la cola.
+Medirías el periodo del timer, no la arquitectura.
+
+Con drenado, 25 filas salen en **un solo tick**: tres llamadas de 10, 10 y 5.
+
+### 3 · Los dos backoffs, separados
+
+| | Dónde | Alcance | Protege de |
+|---|---|---|---|
+| `attempts` / `next_attempt` | **la base** | una fila | que un evento problemático gire en bucle |
+| circuit breaker | **memoria** | toda la dependencia | que sigas martillando un SQS caído |
+
+**La regla**: si el problema es de la fila, va a la base; si es de la
+dependencia, va en memoria. Sin lo segundo, una caída de SQS de quince minutos
+manda **todas** las filas a `FAILED` por un problema que no era de ellas.
+
+---
+
+## El reclamo
+
+```sql
+WITH lote AS (
+  SELECT id FROM outbox
+   WHERE status = 'PENDING' AND next_attempt <= now()
+   ORDER BY created_at
+   LIMIT $1  FOR UPDATE SKIP LOCKED
+)
+UPDATE outbox o
+   SET attempts     = o.attempts + 1,
+       next_attempt = now() + (interval '1 second'
+                     * least(power(2, o.attempts), $2::numeric)
+                     * (0.5 + random())),
+       e5_reclamado = $3::timestamptz
+  FROM lote WHERE o.id = lote.id
+ RETURNING o.id, o.rpf_id, o.payload_hash, o.envelope, o.attempts;
+```
+
+### `attempts + 1` al RECLAMAR, no al fallar
+
+Si se incrementara al fallar, el `ROLLBACK` de esa transacción **desharía el
+contador** y el reintento sería inmediato en vez de escalonado: una fila
+problemática giraría en bucle a toda velocidad y el relay no avanzaría nunca.
+
+### Este `UPDATE` hace commit ANTES de publicar
+
+A partir de ahí hay tres desenlaces y los tres son sanos:
+
+| Caso | Qué pasa |
+|---|---|
+| Publica bien | Una segunda transacción la marca `SENT` |
+| Falla la publicación | Nada. Ya tiene `attempts+1` y `next_attempt` futuro: se reintenta sola |
+| El contenedor muere a media publicación | Idéntico. Se recupera solo |
+
+Por eso **no hace falta transacción autónoma ni lógica de compensación**.
+
+### `SKIP LOCKED` y el jitter
+
+`SKIP LOCKED` evita que dos relays tomen las mismas filas — hay un test que
+lanza dos a la vez y comprueba que ninguna fila la toman los dos.
+
+El `random()` evita el thundering herd: cuando SQS devuelve throttling, los 50
+contenedores fallan casi a la vez y sin jitter reintentarían **todos en el mismo
+instante**.
+
+| intento | espera base | con jitter |
+|---|---|---|
+| 1 | 1 s | 0,5 – 1,5 s |
+| 5 | 16 s | 8 – 24 s |
+| 9+ | 300 s (techo) | 150 – 450 s |
+
+---
+
+## La publicación
+
+`SendMessageBatch`, hasta 10 mensajes. Con sobres de ~4,7 KB caben con muchísimo
+margen bajo los 256 KB.
+
+```
+MessageGroupId          = rpf_id         ordena los eventos del expediente
+MessageDeduplicationId  = payload_hash   sha256 del canónico EN CLARO
+```
+
+**Los dos van en claro**, y no es un descuido: el cuerpo está cifrado, así que
+SQS no puede leer nada de él. Si viajaran dentro, la cola no tendría de dónde
+sacar ni el orden ni la deduplicación.
+
+### Un envío parcial es NORMAL
+
+La respuesta trae `Successful` **y** `Failed` a la vez, y hay que mirar los dos.
+Tratar la llamada como todo-o-nada marcaría como fallidos mensajes que SQS ya
+aceptó — y entonces se reenviarían. Funcionaría, por accidente, gracias a la
+deduplicación.
+
+### Errores permanentes
+
+```
+InvalidParameterValue · InvalidMessageContents · AccessDenied
+QueueDoesNotExist · UnsupportedOperation · KMSAccessDenied · …
+```
+
+Van **directo a `FAILED`** sin gastar los intentos que les quedan. Reintentar
+diez veces un `InvalidParameterValue` no lo arregla: solo retrasa quince minutos
+el momento de enterarte, con la fila girando mientras tanto.
+
+Se combina con el `SenderFault` que devuelve SQS, para no depender de una sola
+fuente.
+
+**Los dos que de verdad se van a pegar en esta PoC** son de configuración:
+`AccessDenied` cross-account —la resource policy de la cola o el permiso de
+`kms:GenerateDataKey`— y `QueueDoesNotExist`.
+
+---
+
+## El circuit breaker
+
+Se abre cuando **no pasa NI UNA** del lote, no cuando falla una fila. Una fila
+mala es problema de la fila y ya tiene su backoff en la base; que no pase
+ninguna es síntoma de que la dependencia está caída.
+
+```ts
+this.fallosSeguidos++;
+this.pausaHasta = Date.now() + Math.min(2 ** this.fallosSeguidos * 250, 30_000);
+```
+
+Se cierra en cuanto vuelve a pasar algo.
+
+---
+
+## El purgado
+
+```ts
+@Cron(CronExpression.EVERY_HOUR)
+```
+
+Borra `SENT` de más de dos horas y manda a `FAILED` lo que agotó sus intentos.
+
+**No corre en el mismo bucle que publica**: borrar mientras publicas mete
+contención de vacuum justo bajo carga, que es cuando menos conviene.
+
+Y el paso a `FAILED` no es opcional: sin él, una fila agotada se reintenta para
+siempre y el relay se atasca sobre el mismo lote mientras la cola crece por
+detrás.
+
+---
+
+## C-07 · el cierre ordenado
+
+Fargate da 30 segundos. Al recibir `SIGTERM` se deja de tomar trabajo nuevo; el
+tick en vuelo termina solo, y lo que no llegue a publicarse **se queda
+`PENDING`** con su `next_attempt`. Otro contenedor, o éste al reiniciar, lo
+toma.
+
+Nada se pierde porque nada se borró del outbox.

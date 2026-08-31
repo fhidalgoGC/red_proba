@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Reset minimo — el mismo que aplica el visor de artefactos. */
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+</style>
+<title>C3, el contenedor del participante, por dentro</title>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf; --rule-fine:#dde1db;
+    --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    /* azul = el camino del dato · ámbar = lo que cuesta una llamada a KMS */
+    --det:#0f5fa0; --det-soft:#0f5fa01f;
+    --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 34rem; --wide: 64rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438; --rule-fine:#232b2f;
+      --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+      --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+      --nada:#8f9aa1; --alarma:#e2705c; }
+  }
+  :root[data-theme="dark"] { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438;
+    --rule-fine:#232b2f; --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+    --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+    --nada:#8f9aa1; --alarma:#e2705c; }
+  :root[data-theme="light"] { --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf;
+    --rule-fine:#dde1db; --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    --det:#0f5fa0; --det-soft:#0f5fa01f; --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c; }
+
+  body { background: var(--ground); color: var(--ink); font-family: var(--serif);
+         font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .hoja { max-width: var(--wide); margin: 0 auto; padding: 3.5rem 1.5rem 6rem;
+          display: flex; flex-direction: column; gap: 2.5rem; }
+  .prosa { max-width: var(--measure); }
+  .prosa > * + * { margin-top: 1rem; }
+
+  h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; }
+  h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.02em; }
+  h2 { font-size: 1.55rem; letter-spacing: -0.01em; }
+  p { margin: 0; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+  p code, li code, td code, figcaption code { background: var(--panel); padding: 0.08em 0.34em; border-radius: 3px; }
+
+  .eyebrow { font-family: var(--sans); font-size: 0.7rem; font-weight: 600;
+             letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .paso { font-family: var(--mono); font-size: 0.78rem; color: var(--det);
+          letter-spacing: 0.06em; font-weight: 600; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 2rem; }
+  header .standfirst { max-width: var(--measure); margin-top: 1rem; font-size: 1.08rem; color: var(--ink-2); }
+
+  section { display: flex; flex-direction: column; gap: 1.3rem; }
+  hr.sep { border: 0; border-top: 1px solid var(--rule); margin: 0.75rem 0 0; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lienzo { overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; }
+  figcaption { font-family: var(--sans); font-size: 0.78rem; color: var(--ink-2);
+               line-height: 1.55; max-width: 64ch; }
+
+  .tabla-envoltorio { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.45rem 0.85rem 0.45rem 0;
+           border-bottom: 1px solid var(--rule-fine); vertical-align: top; }
+  th { font-family: var(--sans); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  pre { background: var(--raised); border: 1px solid var(--rule); border-left: 2px solid var(--det);
+        border-radius: 3px; padding: 0.8rem 1rem; overflow-x: auto;
+        font-family: var(--mono); font-size: 0.78rem; line-height: 1.58; }
+  pre .c { color: var(--ink-3); }
+  pre .k { color: var(--det); }
+  pre .s { color: var(--ident); }
+
+  .nota { border-left: 2px solid var(--ident); background: var(--ident-soft);
+          border-radius: 0 3px 3px 0; padding: 0.75rem 1rem; max-width: 46rem;
+          font-size: 0.95rem; }
+  .nota b { color: var(--ident); }
+
+  .cifras { display: flex; flex-wrap: wrap; gap: 0.4rem 2.2rem; }
+  .cifra { display: flex; flex-direction: column; gap: 0.1rem; }
+  .cifra .v { font-family: var(--mono); font-size: 1.25rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .cifra .k { font-family: var(--sans); font-size: 0.67rem; letter-spacing: 0.08em;
+              text-transform: uppercase; color: var(--ink-3); }
+
+  .leyenda { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+             font-family: var(--sans); font-size: 0.77rem; color: var(--ink-2); }
+  .leyenda span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .leyenda i { width: 0.75rem; height: 0.75rem; border-radius: 2px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 1.4rem; font-family: var(--sans);
+           font-size: 0.78rem; color: var(--ink-3); max-width: 62ch; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+
+<div class="hoja">
+
+  <header>
+    <div class="eyebrow">PoC RPF Proof Ledger · track C</div>
+    <h1>C3, el contenedor del participante, por dentro</h1>
+    <p class="standfirst">
+      Recibe documentos ya hechos, los valida contra un contrato, les pone el
+      pseudónimo del participante, los canoniza, los firma con KMS, los cifra
+      con la llave de C4 y los escribe en un outbox <em>dentro de la transacción
+      de negocio</em>. Un relay los publica en la cola. Nueve diagramas de por qué
+      cada decisión no era la obvia.
+    </p>
+  </header>
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">EL PIPELINE</div>
+      <h2>Seis pasos, y el orden no se negocia</h2>
+      <p>
+        Cada paso depende del anterior de una forma que, si se altera, no falla
+        ahí: falla en C4, horas después, con un síntoma que no se parece a la
+        causa.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 300" role="img" width="900" style="min-width:700px"
+             aria-label="Los seis pasos de C3: validar, party_id, canonizar, firmar, cifrar y escribir el outbox; después el relay publica en SQS">
+          <defs>
+            <marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <text x="14" y="24" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              del orquestador · party_id de relleno · 3.072 bytes canónicos
+            </text>
+
+            <!-- pasos -->
+            <rect x="14" y="36" width="132" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="80" y="56" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">1 · validar</text>
+            <text x="80" y="72" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">contrato + peso</text>
+
+            <rect x="160" y="36" width="132" height="46" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="226" y="56" text-anchor="middle" fill="var(--ident)" font-size="11" font-weight="600">2 · party_id</text>
+            <text x="226" y="72" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">HMAC · cacheado</text>
+
+            <rect x="306" y="36" width="132" height="46" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="372" y="56" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">3 · canonizar</text>
+            <text x="372" y="72" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">JCS → payload_hash</text>
+
+            <rect x="452" y="36" width="132" height="46" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="2"/>
+            <text x="518" y="56" text-anchor="middle" fill="var(--ident)" font-size="11" font-weight="600">4 · firmar</text>
+            <text x="518" y="72" text-anchor="middle" fill="var(--alarma)" font-size="9.5">KMS · 83 ms</text>
+
+            <rect x="598" y="36" width="132" height="46" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="664" y="56" text-anchor="middle" fill="var(--ident)" font-size="11" font-weight="600">5 · cifrar</text>
+            <text x="664" y="72" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">AES · en proceso</text>
+
+            <rect x="744" y="36" width="142" height="46" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="2"/>
+            <text x="815" y="56" text-anchor="middle" fill="var(--det)" font-size="11" font-weight="600">6 · TRANSACCIÓN</text>
+            <text x="815" y="72" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">expediente + outbox</text>
+
+            <g stroke="currentColor" stroke-width="1.3">
+              <line x1="146" y1="59" x2="156" y2="59" marker-end="url(#p1)"/>
+              <line x1="292" y1="59" x2="302" y2="59" marker-end="url(#p1)"/>
+              <line x1="438" y1="59" x2="448" y2="59" marker-end="url(#p1)"/>
+              <line x1="584" y1="59" x2="594" y2="59" marker-end="url(#p1)"/>
+              <line x1="730" y1="59" x2="740" y2="59" marker-end="url(#p1)"/>
+            </g>
+
+            <!-- marcas -->
+            <g font-size="9.5" fill="var(--det)">
+              <text x="14"  y="98">e0</text><text x="306" y="98">e1</text>
+              <text x="452" y="98">e2</text><text x="598" y="98">e3</text>
+              <text x="744" y="98">e4</text>
+            </g>
+            <line x1="14" y1="104" x2="886" y2="104" stroke="var(--rule)" stroke-width="1"/>
+            <text x="14" y="120" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">
+              las marcas van en COLUMNAS del outbox, nunca dentro del payload (regla 8)
+            </text>
+
+            <!-- el corte -->
+            <line x1="736" y1="26" x2="736" y2="130" stroke="var(--det)" stroke-width="1.6" stroke-dasharray="5 4"/>
+            <text x="744" y="20" fill="var(--det)" font-size="9.5">COMMIT</text>
+
+            <!-- relay -->
+            <rect x="14" y="152" width="872" height="60" rx="4" fill="none" stroke="var(--det)" stroke-width="1.5" stroke-dasharray="6 4"/>
+            <text x="30" y="174" fill="var(--det)" font-size="11" font-weight="600">el relay, en el MISMO proceso · cada OUTBOX_POLL_MS</text>
+            <text x="30" y="194" fill="currentColor" font-size="10.5">reclamar (attempts+1, SKIP LOCKED) → SendMessageBatch → SQS FIFO → SENT</text>
+            <text x="700" y="194" fill="var(--det)" font-size="9.5">e5 · e6</text>
+
+            <!-- lo que se rompe -->
+            <text x="14" y="240" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              Qué pasa si se altera el orden
+            </text>
+            <text x="14" y="260" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              party_id DESPUÉS de canonizar  →  la firma cubre el relleno  →  C4: firma_invalida, DLQ con alarma
+            </text>
+            <text x="14" y="278" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              publicar ANTES del commit      →  un evento en la cola que no existe en tu base, imposible de reconciliar
+            </text>
+            <text x="14" y="296" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              cifrar ANTES de firmar         →  la firma cubriría un cifrado que cualquiera pudo rehacer (regla 6)
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El <code>party_id</code> entra en el paso 2 porque es <strong>un campo del
+        payload</strong>: entra en lo que se canoniza y se firma. Y el commit corta
+        el diagrama en dos a propósito — la publicación no está en este pipeline,
+        está en el relay, leyendo el outbox.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">LO QUE KMS HACE, Y LO QUE NO</div>
+      <h2>Tres llamadas con frecuencias muy distintas</h2>
+      <p>
+        La firma es lo caro y es lo que la PoC vino a medir. Las otras dos se
+        pagan una vez y se reusan — si no, C3 se saturaría en la cuota de KMS
+        antes que en nada que importe.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 260" role="img" width="900" style="min-width:700px"
+             aria-label="El HMAC se pide una vez al arrancar, la data key cada 100 eventos, y la firma en cada evento">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <!-- HMAC -->
+            <rect x="14" y="30" width="270" height="70" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.4"/>
+            <text x="28" y="52" fill="var(--ident)" font-size="11" font-weight="600">GenerateMac · party_id</text>
+            <text x="28" y="72" fill="currentColor" font-size="10.5">1 llamada AL ARRANCAR</text>
+            <text x="28" y="90" fill="var(--ink-3)" font-size="10">cacheada de por vida del proceso</text>
+
+            <!-- data key -->
+            <rect x="300" y="30" width="270" height="70" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.4"/>
+            <text x="314" y="52" fill="var(--ident)" font-size="11" font-weight="600">GenerateDataKey</text>
+            <text x="314" y="72" fill="currentColor" font-size="10.5">1 cada 100 eventos</text>
+            <text x="314" y="90" fill="var(--ink-3)" font-size="10">C4 la cachea por edk al otro lado</text>
+
+            <!-- firma -->
+            <rect x="586" y="30" width="300" height="70" rx="4" fill="var(--ident-soft)" stroke="var(--alarma)" stroke-width="2"/>
+            <text x="600" y="52" fill="var(--alarma)" font-size="11" font-weight="600">Sign · ED25519_SHA_512</text>
+            <text x="600" y="72" fill="currentColor" font-size="10.5">1 POR EVENTO · 83 ms de media</text>
+            <text x="600" y="90" fill="var(--alarma)" font-size="10">el 92% del tiempo de C3</text>
+
+            <!-- lo que NO va a KMS -->
+            <rect x="14" y="126" width="872" height="52" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="28" y="148" fill="var(--det)" font-size="11" font-weight="600">Y el cifrado NO pasa por KMS</text>
+            <text x="28" y="168" fill="currentColor" font-size="10.5">AES-256-GCM con node:crypto, en proceso, 0 llamadas de red. KMS solo entrega la llave de 32 bytes.</text>
+
+            <!-- la trampa del algoritmo -->
+            <text x="14" y="206" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              La trampa que más silenciosamente lo habría roto todo
+            </text>
+            <text x="14" y="226" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              No existe "EDDSA" en el SDK. Y ED25519_PH_SHA_512 pide MessageType: DIGEST y produce firmas
+            </text>
+            <text x="14" y="244" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              que la verificación Ed25519 pura de C4 RECHAZARÍA — mismo nombre de curva, esquema distinto.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Cliente del SDK en <strong>singleton</strong>: uno por petición añadiría el
+        handshake TLS a cada evento, y a 2.000 ev/s eso no es ruido, es la medición
+        entera. Y sin reintento propio — el SDK ya reintenta lo reintentable, y uno
+        a mano falsearía el tramo <code>e1→e2</code> con esperas que no son de la firma.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>El modo local no sirve para producir nada real.</b> Sin las tres llaves,
+      C3 firma con una Ed25519 del proceso y cifra con una data key local — y
+      <strong>C4 no puede abrir eso</strong>: la <code>edk</code> no viene de
+      <code>GenerateDataKey</code> y la llave no está en su lista blanca. Los dos
+      casos terminan en la DLQ con alarma. Sirve para correr los tests sin
+      credenciales, y para nada más. Por eso existe <code>npm run e2e:kms</code>:
+      es la única prueba que responde si lo que cifra C3 lo abre C4.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">C-05 · EL OUTBOX</div>
+      <h2>De esta tabla sale todo lo que llega a C4</h2>
+      <p>
+        El relay no lee de ningún otro sitio. Lo que no quede aquí no se publica
+        y, por lo tanto, <strong>no existe para C4</strong>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 280" role="img" width="900" style="min-width:700px"
+             aria-label="El expediente y la fila del outbox se escriben en la misma transacción; publicar queda fuera">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <rect x="14" y="30" width="440" height="130" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="2"/>
+            <text x="28" y="52" fill="var(--det)" font-size="11.5" font-weight="600">BEGIN</text>
+            <text x="40" y="76" fill="currentColor" font-size="10.5">INSERT INTO expediente … ON CONFLICT DO UPDATE</text>
+            <text x="40" y="94" fill="var(--ink-3)" font-size="9.5">el estado de negocio, "thread" por rpf_id</text>
+            <text x="40" y="118" fill="currentColor" font-size="10.5">INSERT INTO outbox (… envelope, e0..e4)  status=PENDING</text>
+            <text x="40" y="136" fill="var(--ink-3)" font-size="9.5">el sobre cifrado completo</text>
+            <text x="28" y="154" fill="var(--det)" font-size="11.5" font-weight="600">COMMIT</text>
+
+            <text x="472" y="60" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              Aquí NO se publica nada
+            </text>
+            <text x="472" y="80" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Este archivo ni siquiera importa el cliente de SQS.
+            </text>
+            <text x="472" y="98" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Es la regla 3 hecha estructura, no disciplina.
+            </text>
+            <text x="472" y="124" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Publicar dentro daría "se publicó y luego el commit
+            </text>
+            <text x="472" y="142" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              falló": un evento en la cola que no existe en tu base.
+            </text>
+
+            <!-- por que dos tablas -->
+            <rect x="14" y="180" width="872" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+            <text x="28" y="198" fill="currentColor" font-size="10.5" font-weight="600">¿Por qué hay una tabla de negocio si la PoC no simula un ERP?</text>
+            <text x="28" y="215" fill="var(--ink-3)" font-size="10">Sin una segunda escritura, la regla 2 no se puede demostrar NI romper: sería una regla decorativa.</text>
+
+            <!-- indice parcial -->
+            <text x="14" y="248" fill="var(--det)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              El índice es PARCIAL, y por eso se mantiene pequeño
+            </text>
+            <text x="14" y="268" fill="currentColor" font-size="10.5">
+              CREATE INDEX … ON outbox (next_attempt) WHERE status = 'PENDING'   ← la tabla crece con lo enviado; el índice, no
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        <strong>Una transacción por lote, no por evento.</strong> Con 20 documentos
+        serían 20 fsync donde basta uno. El precio es que un fallo tumba el lote
+        entero — y es el precio correcto: a esa altura el fallo es de la BASE, no del
+        documento.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">C-06 · EL RELAY</div>
+      <h2>Tres cosas que no son opcionales</h2>
+      <p>
+        Las tres fallan en silencio si faltan. Ninguna produce un error visible;
+        las tres tienen un test que las rompe a propósito.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 320" role="img" width="900" style="min-width:700px"
+             aria-label="El finally libera el guardia, el drenado vacía el outbox en un tick, y los dos backoffs viven en sitios distintos">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <!-- 1 finally -->
+            <text x="14" y="26" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">1 · EL finally</text>
+            <rect x="14" y="36" width="280" height="86" rx="4" fill="none" stroke="var(--alarma)" stroke-width="1.5"/>
+            <text x="26" y="56" fill="currentColor" font-size="10">ocupado = true</text>
+            <text x="26" y="72" fill="currentColor" font-size="10">try   { drenar() }</text>
+            <text x="26" y="88" fill="currentColor" font-size="10">catch { log }</text>
+            <text x="26" y="104" fill="var(--alarma)" font-size="10" font-weight="600">finally { ocupado = false }</text>
+            <text x="14" y="140" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">Sin él, una excepción congela el relay</text>
+            <text x="14" y="156" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">PARA SIEMPRE — con el health en verde</text>
+            <text x="14" y="172" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">y los eventos acumulándose en silencio.</text>
+
+            <!-- 2 drenado -->
+            <text x="320" y="26" fill="var(--det)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">2 · EL DRENADO</text>
+            <rect x="320" y="36" width="260" height="86" rx="4" fill="none" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="332" y="60" fill="currentColor" font-size="10">do { n = publicarLote() }</text>
+            <text x="332" y="78" fill="var(--det)" font-size="10" font-weight="600">while (n &gt; 0)</text>
+            <text x="332" y="102" fill="var(--ink-3)" font-size="10">25 filas → 3 llamadas, UN tick</text>
+            <text x="320" y="140" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">Sin él el techo son 10 msg/tick:</text>
+            <text x="320" y="156" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">20 ev/s por contenedor, sin importar</text>
+            <text x="320" y="172" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">cuánto aguanten la base o la cola.</text>
+
+            <!-- 3 backoffs -->
+            <text x="606" y="26" fill="var(--ident)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">3 · DOS BACKOFFS SEPARADOS</text>
+            <rect x="606" y="36" width="280" height="40" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.4"/>
+            <text x="618" y="52" fill="var(--ident)" font-size="10" font-weight="600">attempts / next_attempt → LA BASE</text>
+            <text x="618" y="68" fill="var(--ink-3)" font-size="9.5">una fila · sobrevive a reinicios</text>
+            <rect x="606" y="82" width="280" height="40" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.4"/>
+            <text x="618" y="98" fill="var(--ident)" font-size="10" font-weight="600">circuit breaker → MEMORIA</text>
+            <text x="618" y="114" fill="var(--ink-3)" font-size="9.5">toda la dependencia</text>
+            <text x="606" y="140" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">Sin el segundo, una caída de SQS de</text>
+            <text x="606" y="156" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">15 min manda TODAS las filas a FAILED</text>
+            <text x="606" y="172" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">por un problema que no era de ellas.</text>
+
+            <!-- el reclamo -->
+            <rect x="14" y="196" width="872" height="52" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="28" y="216" fill="var(--det)" font-size="11" font-weight="600">attempts + 1 AL RECLAMAR, no al fallar</text>
+            <text x="28" y="236" fill="currentColor" font-size="10.5">Si se incrementara al fallar, el ROLLBACK desharía el contador y el reintento sería inmediato: la fila giraría en bucle.</text>
+
+            <!-- los tres desenlaces -->
+            <text x="14" y="276" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              El reclamo hace COMMIT antes de publicar, y por eso los tres desenlaces son sanos:
+            </text>
+            <text x="14" y="296" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              publica bien → SENT   ·   falla → ya tiene attempts+1 y next_attempt futuro, se reintenta sola   ·   el contenedor muere → idéntico
+            </text>
+            <text x="14" y="314" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              No hace falta transacción autónoma ni lógica de compensación.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        <code>FOR UPDATE SKIP LOCKED</code> evita que dos relays tomen las mismas
+        filas, y el <code>random()</code> del jitter evita el thundering herd:
+        cuando SQS devuelve throttling los 50 contenedores fallan casi a la vez, y
+        sin jitter reintentarían todos en el mismo instante.
+      </figcaption>
+    </figure>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">MEDICIÓN</div>
+      <h2>El hallazgo cambió al medir la cadena entera</h2>
+      <p>
+        Con solo <code>e0..e4</code>, la firma parecía el 92% del problema. Con el
+        camino completo, el cuello del <em>sistema</em> es otro.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 250" role="img" width="900" style="min-width:700px"
+             aria-label="Barras de los tramos: la firma domina dentro de C3, pero el tiempo en cola domina el extremo a extremo">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="10.5">
+
+            <text x="14" y="22" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              803 eventos reales · KMS, SQS y Postgres de verdad · media en ms
+            </text>
+
+            <!-- barras, escala: 1 ms = 1.5 px -->
+            <g>
+              <text x="14" y="48" fill="var(--ink-3)">e0→e1 mapper</text>
+              <rect x="180" y="38" width="1" height="14" fill="var(--det)"/>
+              <text x="192" y="48" fill="var(--ink-3)">0,1</text>
+
+              <text x="14" y="70" fill="currentColor" font-weight="600">e1→e2 FIRMA</text>
+              <rect x="180" y="60" width="125" height="14" fill="var(--ident)"/>
+              <text x="313" y="70" fill="var(--ident)" font-weight="600">83,0 · el cuello de C3</text>
+
+              <text x="14" y="92" fill="var(--ink-3)">e2→e3 cifrado</text>
+              <rect x="180" y="82" width="7" height="14" fill="var(--det)"/>
+              <text x="195" y="92" fill="var(--ink-3)">4,4</text>
+
+              <text x="14" y="114" fill="var(--ink-3)">e3→e4 commit</text>
+              <rect x="180" y="104" width="5" height="14" fill="var(--det)"/>
+              <text x="193" y="114" fill="var(--ink-3)">3,3</text>
+
+              <text x="14" y="136" fill="var(--ink-3)">e4→e5 outbox</text>
+              <rect x="180" y="126" width="144" height="14" fill="var(--det)"/>
+              <text x="332" y="136" fill="var(--ink-3)">96,1 · espera</text>
+
+              <text x="14" y="158" fill="var(--ink-3)">e5→e6 publicar</text>
+              <rect x="180" y="148" width="122" height="14" fill="var(--det)"/>
+              <text x="310" y="158" fill="var(--ink-3)">81,6</text>
+
+              <text x="14" y="180" fill="var(--alarma)" font-weight="600">e6→e7 COLA</text>
+              <rect x="180" y="170" width="620" height="14" fill="var(--alarma)" fill-opacity="0.75"/>
+              <text x="808" y="180" fill="var(--alarma)" font-weight="600">500,3</text>
+
+              <text x="14" y="202" fill="var(--ink-3)">e7→e10 C4</text>
+              <rect x="180" y="192" width="46" height="14" fill="var(--det)"/>
+              <text x="234" y="202" fill="var(--ink-3)">28,4</text>
+            </g>
+
+            <line x1="14" y1="216" x2="886" y2="216" stroke="var(--rule)"/>
+            <text x="14" y="236" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              e0→e10 extremo a extremo: 800,3 ms — y el 62% es tiempo en cola, no firma.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        La firma sigue siendo el cuello de <strong>C3</strong>; la cola es el cuello
+        del <strong>sistema</strong>. Es la clase de respuesta que pedía P3, y solo
+        aparece midiendo el camino completo: C3 publica a 65 ev/s y C4 consume a 48.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y la conciliación no puede usar un JOIN.</b> C3 y C4 no comparten base
+      —son dominios sin ruta de red entre ellos—, así que
+      <code>JOIN c3.outbox … c4.inbox</code> pasaría en local y sería imposible en
+      producción. Se exporta de cada base por separado y se cruza fuera:
+      <strong>2.089 + 2.180 = 4.269 en C3, 4.269 en C4, cero perdidos.</strong>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">C-09 · EL LOG POR SEGUNDO</div>
+      <h2>Dos llamadas por tramo, y el reloj decide el segundo</h2>
+      <p>
+        Las marcas <code>e0..e6</code> viven en la base y sirven para conciliar con
+        C4. Pero tienen resolución de <strong>milisegundo</strong>, y canonizar
+        tarda 0,08&nbsp;ms: restándolas, el informe diría que el pipeline es gratis.
+        Así que hay un segundo registro, con otra unidad — <em>duraciones</em>, no
+        instantes — y otra pregunta: <strong>en este segundo, ¿cuántos empezaron y
+        cuántos terminaron?</strong>
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 330" role="img" width="900" style="min-width:700px"
+             aria-label="Tres peticiones cuya firma cruza la frontera del segundo: init cae en el segundo en que el tramo empezó y completed en el que terminó, así que en el segundo 1 hay dos firmas iniciadas y ninguna terminada">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="10.5">
+
+            <text x="14" y="20" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
+              tres peticiones · la firma tarda más de un segundo · el eje es tiempo de reloj
+            </text>
+
+            <!-- bandas de segundo -->
+            <g stroke="var(--rule)" stroke-width="1" stroke-dasharray="4 4">
+              <line x1="60"  y1="32" x2="60"  y2="214"/>
+              <line x1="333" y1="32" x2="333" y2="214"/>
+              <line x1="606" y1="32" x2="606" y2="214"/>
+              <line x1="879" y1="32" x2="879" y2="214"/>
+            </g>
+            <g fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10" font-weight="600">
+              <text x="70"  y="45">segundo 1</text>
+              <text x="343" y="45">segundo 2</text>
+              <text x="616" y="45">segundo 3</text>
+            </g>
+
+            <!-- peticion 1 -->
+            <text x="8" y="76" fill="var(--ink-3)" font-size="9.5">pet 1</text>
+            <rect x="80" y="66" width="6" height="13" fill="var(--det)"/>
+            <rect x="88" y="66" width="312" height="13" fill="var(--ident)" fill-opacity="0.85"/>
+            <rect x="402" y="66" width="10" height="13" fill="var(--det)"/>
+            <circle cx="88" cy="60" r="3" fill="var(--ident)"/>
+            <circle cx="400" cy="60" r="3" fill="var(--det)"/>
+
+            <!-- peticion 2 -->
+            <text x="8" y="106" fill="var(--ink-3)" font-size="9.5">pet 2</text>
+            <rect x="170" y="96" width="6" height="13" fill="var(--det)"/>
+            <rect x="178" y="96" width="290" height="13" fill="var(--ident)" fill-opacity="0.85"/>
+            <rect x="470" y="96" width="10" height="13" fill="var(--det)"/>
+            <circle cx="178" cy="90" r="3" fill="var(--ident)"/>
+            <circle cx="468" cy="90" r="3" fill="var(--det)"/>
+
+            <!-- peticion 3 -->
+            <text x="8" y="136" fill="var(--ink-3)" font-size="9.5">pet 3</text>
+            <rect x="390" y="126" width="6" height="13" fill="var(--det)"/>
+            <rect x="398" y="126" width="272" height="13" fill="var(--ident)" fill-opacity="0.85"/>
+            <rect x="672" y="126" width="10" height="13" fill="var(--det)"/>
+            <circle cx="398" cy="120" r="3" fill="var(--ident)"/>
+            <circle cx="670" cy="120" r="3" fill="var(--det)"/>
+
+            <!-- llamadas -->
+            <text x="88" y="170" fill="var(--ident)" font-size="9.5" font-weight="600">abre(&#39;sign&#39;)</text>
+            <line x1="88" y1="158" x2="88" y2="146" stroke="var(--ident)" stroke-width="1.2"/>
+            <text x="330" y="188" fill="var(--det)" font-size="9.5" font-weight="600">cierra(&#39;sign&#39;, ms)</text>
+            <line x1="400" y1="176" x2="400" y2="146" stroke="var(--det)" stroke-width="1.2"/>
+
+            <text x="14" y="208" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">
+              cada llamada cae en el segundo en que se EJECUTA · nadie elige el bucket
+            </text>
+
+            <!-- lo que sale al informe -->
+            <line x1="14" y1="228" x2="886" y2="228" stroke="var(--rule)"/>
+            <text x="14" y="248" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              Lo que sale al informe
+            </text>
+
+            <g font-size="10.5">
+              <text x="70"  y="272" fill="var(--ident)" font-weight="600">sign.init 2</text>
+              <text x="70"  y="290" fill="var(--nada)">sign.completed 0</text>
+              <text x="343" y="272" fill="var(--ident)" font-weight="600">sign.init 1</text>
+              <text x="343" y="290" fill="var(--det)" font-weight="600">sign.completed 2</text>
+              <text x="616" y="272" fill="var(--nada)">sign.init 0</text>
+              <text x="616" y="290" fill="var(--det)" font-weight="600">sign.completed 1</text>
+            </g>
+
+            <text x="14" y="320" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Dos firmas entran y no vuelve ninguna. Ese hueco ES el dato: dice cuánto trabajo hay en vuelo, no cuánto se hizo.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        <code>abre()</code> se llama <strong>antes</strong> de hacer el trabajo y
+        <code>cierra()</code> después. Anotar el <code>init</code> al volver lo
+        movería al segundo en que acabó — que es justo lo que ya cuenta
+        <code>completed</code>, y entonces los dos números serían siempre iguales y
+        ninguno diría nada.
+      </figcaption>
+    </figure>
+
+    <div class="prosa">
+      <h3 style="font-size:1.1rem">Un arranque real, con KMS como cuello</h3>
+    </div>
+
+    <div class="tabla-envoltorio">
+      <table>
+        <thead>
+          <tr><th></th><th>request</th><th>canonical</th><th>sign</th><th>encrypt</th><th>outbox</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="n">seg 1</td><td class="n">45 / 0</td><td class="n">45 / 45</td><td class="n">45 / 0</td><td class="n">—</td><td class="n">—</td></tr>
+          <tr><td class="n">seg 2</td><td class="n">34 / 0</td><td class="n">34 / 34</td><td class="n">34 / 67</td><td class="n">67 / 0</td><td class="n">—</td></tr>
+          <tr><td class="n">seg 3</td><td class="n">75 / 16</td><td class="n">227 / 227</td><td class="n">227 / 107</td><td class="n">107 / 168</td><td class="n">16 / 16</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figcaption>
+      <code>init / completed</code>. <code>canonical</code> cierra siempre en su
+      mismo segundo porque es síncrono y tarda 0,08&nbsp;ms. <code>sign</code> no:
+      en el segundo 2 empiezan 34 y salen <strong>67</strong> — las 45 atascadas del
+      segundo 1 más 22 de las nuevas. Eso es lo que responde P3, y un solo contador
+      no lo enseña.
+    </figcaption>
+
+    <div class="prosa">
+      <h3 style="font-size:1.1rem">De la muestra al percentil</h3>
+      <p>
+        Cada <code>cierra()</code> empuja un número a la serie del segundo. La serie
+        lleva dos cuentas a la vez, y no son la misma:
+      </p>
+    </div>
+
+<pre><span class="c">// duracion con reloj MONOTONO: no lo mueve un ajuste de NTP a mitad de corrida</span>
+<span class="k">const</span> ahora = () =&gt; process.hrtime.bigint();          <span class="c">// nanosegundos</span>
+
+push(ms) {
+  <span class="k">this</span>.n    += <span class="s">1</span>;                 <span class="c">// exacto, SIEMPRE</span>
+  <span class="k">this</span>.suma += ms;                <span class="c">// exacto, SIEMPRE</span>
+  <span class="k">if</span> (ms &gt; <span class="k">this</span>.max) <span class="k">this</span>.max = ms;
+  <span class="k">if</span> (<span class="k">this</span>.crudas.length &lt; <span class="s">500</span>) <span class="k">this</span>.crudas.push(ms);   <span class="c">// solo percentiles</span>
+}</pre>
+
+    <figcaption>
+      <code>n</code>, <code>suma</code> y <code>max</code> se acumulan en O(1) por
+      muestra y <strong>el techo no les afecta</strong>. Solo el array
+      <code>crudas</code> se recorta, y solo alimenta los percentiles — por eso
+      <code>muestras</code> puede quedar por debajo de <code>n</code>. Si
+      <code>suma</code> saliera del array recortado, un segundo con 553 ejecuciones
+      declararía el tiempo de 500 y las sumas dejarían de cuadrar sin un solo error
+      a la vista.
+    </figcaption>
+
+    <div class="nota">
+      <b>La aritmética cuadra en el total, no en una fila.</b>
+      <code>canonical + sign + encrypt + outbox = pipeline</code>, y
+      <code>pipeline + delay</code> es casi toda la latencia. En una fila suelta no
+      tiene por qué: los tramos de una petición que cruza la frontera del segundo
+      caen repartidos — que es justo lo que <code>init</code> vs
+      <code>completed</code> está enseñando. Medido sobre tráfico real (1.038
+      peticiones, 5.682 documentos) el residuo del total es del
+      <strong>0,0002%</strong>: unos 12&nbsp;µs por documento, los
+      <code>toISOString()</code> de las marcas y el <code>JSON.stringify</code> del
+      sobre para pesarlo.
+    </div>
+
+    <div class="leyenda">
+      <span><i style="background:var(--ident)"></i> en vuelo — abrió y no ha cerrado</span>
+      <span><i style="background:var(--det)"></i> terminado — cerró y dejó su muestra</span>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">C-09 · CÓMO SE GUARDAN</div>
+      <h2>Dos destinos, y ninguno es el payload</h2>
+      <p>
+        Los tiempos se guardan <strong>dos veces, en sitios distintos y por
+        motivos distintos</strong>. Nunca dentro del documento: va firmado, y
+        meterle metadatos de medición cambiaría lo que se firma <em>(regla 8)</em>.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 300" role="img" width="900" style="min-width:700px"
+             aria-label="Las marcas e0 a e6 van a columnas del outbox y sobreviven al proceso; las duraciones se acumulan en memoria y se vuelcan a un JSON por prueba y tenant">
+          <defs>
+            <marker id="p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <!-- origen -->
+            <rect x="14" y="30" width="180" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="104" y="52" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">un documento</text>
+            <text x="104" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">pasa por los 6 tramos</text>
+
+            <g stroke="currentColor" stroke-width="1.3">
+              <line x1="194" y1="44" x2="238" y2="44" marker-end="url(#p2)"/>
+              <line x1="194" y1="70" x2="238" y2="70" marker-end="url(#p2)"/>
+            </g>
+
+            <!-- via 1: marcas -->
+            <rect x="242" y="24" width="300" height="56" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="256" y="44" fill="var(--det)" font-size="11" font-weight="600">INSTANTES · e0..e6</text>
+            <text x="256" y="62" fill="currentColor" font-size="10">new Date().toISOString() · resolución de ms</text>
+
+            <line x1="542" y1="52" x2="586" y2="52" stroke="var(--det)" stroke-width="1.3" marker-end="url(#p2)"/>
+            <rect x="590" y="24" width="296" height="56" rx="4" fill="none" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="604" y="44" fill="var(--det)" font-size="11" font-weight="600">COLUMNAS de la fila del outbox</text>
+            <text x="604" y="62" fill="var(--ink-3)" font-size="9.5">sobreviven al proceso · concilian con C4 (P4)</text>
+
+            <!-- via 2: duraciones -->
+            <rect x="242" y="98" width="300" height="56" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="256" y="118" fill="var(--ident)" font-size="11" font-weight="600">DURACIONES · abre/cierra</text>
+            <text x="256" y="136" fill="currentColor" font-size="10">process.hrtime.bigint() · nanosegundos</text>
+
+            <line x1="542" y1="126" x2="586" y2="126" stroke="var(--ident)" stroke-width="1.3" marker-end="url(#p2)"/>
+            <rect x="590" y="98" width="296" height="56" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="604" y="118" fill="var(--ident)" font-size="11" font-weight="600">MEMORIA → c3/logs/&lt;prueba&gt;__&lt;tenant&gt;.json</text>
+            <text x="604" y="136" fill="var(--ink-3)" font-size="9.5">mueren con el proceso · por eso se vuelca cada 10 s</text>
+
+            <!-- por que dos -->
+            <rect x="14" y="176" width="872" height="52" rx="4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+            <text x="28" y="196" fill="currentColor" font-size="10.5" font-weight="600">¿Por qué no basta con las marcas?</text>
+            <text x="28" y="213" fill="var(--ink-3)" font-size="10">Son ISO 8601: resolución de MILISEGUNDO. Canonizar tarda 0,08 ms — restando marcas saldría 0 y el informe diría que el pipeline es gratis.</text>
+
+            <!-- por que el sufijo -->
+            <text x="14" y="256" fill="var(--det)" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              Y el nombre lleva el tenant a propósito
+            </text>
+            <text x="14" y="276" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Del orquestador hay UNO y escribe &lt;prueba&gt;.json. De C3 hay 50, y en local comparten carpeta: sin el sufijo, el último
+            </text>
+            <text x="14" y="294" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              en cerrar pisaría a los demás y la conciliación de P4 miraría el log de un tenant creyendo que es el de todos.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El identificador de la prueba viaja en la cabecera <code>x-prueba-id</code>,
+        no dentro del documento — misma razón que mantiene las marcas fuera del
+        payload.
+      </figcaption>
+    </figure>
+
+    <div class="prosa">
+      <h3 style="font-size:1.1rem">El camino de escritura</h3>
+      <p>
+        C3 <strong>no sabe cuándo acaba la corrida</strong> — eso lo sabe el
+        orquestador. Así que no espera: vuelca en caliente y cierra por silencio.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 320" role="img" width="900" style="min-width:700px"
+             aria-label="Del push a la serie, a comprimir cuando pasa el segundo, al volcado periodico cada diez segundos, al cierre por ocho segundos de silencio o SIGTERM">
+          <defs>
+            <marker id="p3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace,Menlo,monospace" font-size="10.5">
+
+            <!-- 4 etapas -->
+            <rect x="14" y="30" width="200" height="72" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.5"/>
+            <text x="28" y="50" fill="var(--ident)" font-size="10.5" font-weight="600">1 · EN EL SEGUNDO</text>
+            <text x="28" y="68" fill="currentColor" font-size="10">serie.push(ms)</text>
+            <text x="28" y="84" fill="var(--ink-3)" font-size="9.5">n y suma exactos · crudas ≤ 500</text>
+
+            <rect x="234" y="30" width="200" height="72" rx="4" fill="none" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="248" y="50" fill="var(--det)" font-size="10.5" font-weight="600">2 · PASA EL SEGUNDO</text>
+            <text x="248" y="68" fill="currentColor" font-size="10">comprimir() · UNA vez</text>
+            <text x="248" y="84" fill="var(--ink-3)" font-size="9.5">percentiles EXACTOS · libera el array</text>
+
+            <rect x="454" y="30" width="200" height="72" rx="4" fill="none" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="468" y="50" fill="var(--det)" font-size="10.5" font-weight="600">3 · CADA 10 s</text>
+            <text x="468" y="68" fill="currentColor" font-size="10">volcar · cerrado_por: en curso</text>
+            <text x="468" y="84" fill="var(--ink-3)" font-size="9.5">60 s si la serie pasa de 600 segundos</text>
+
+            <rect x="674" y="30" width="212" height="72" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="2"/>
+            <text x="688" y="50" fill="var(--det)" font-size="10.5" font-weight="600">4 · 8 s DE SILENCIO</text>
+            <text x="688" y="68" fill="currentColor" font-size="10">cerrar · o SIGTERM → apagado</text>
+            <text x="688" y="84" fill="var(--ink-3)" font-size="9.5">si vuelve tráfico, se reabre</text>
+
+            <g stroke="currentColor" stroke-width="1.3">
+              <line x1="214" y1="66" x2="230" y2="66" marker-end="url(#p3)"/>
+              <line x1="434" y1="66" x2="450" y2="66" marker-end="url(#p3)"/>
+              <line x1="654" y1="66" x2="670" y2="66" marker-end="url(#p3)"/>
+            </g>
+
+            <!-- escritura atomica -->
+            <rect x="14" y="126" width="872" height="56" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="28" y="146" fill="var(--ident)" font-size="10.5" font-weight="600">Se reescribe el archivo ENTERO en cada volcado — por eso la escritura es atómica</text>
+            <text x="28" y="164" fill="currentColor" font-size="10">writeFileSync(destino + &#39;.tmp&#39;) → renameSync(tmp, destino)     ·     o está el viejo, o está el nuevo. Nunca uno truncado.</text>
+            <text x="28" y="178" fill="var(--ink-3)" font-size="9.5">Un fallo a media escritura sin esto se llevaría la corrida completa, no solo el último tramo.</text>
+
+            <!-- agregacion -->
+            <text x="14" y="212" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              Cada nivel se agrega DESDE EL ANTERIOR — una sola fuente de verdad
+            </text>
+            <g font-size="10.5">
+              <text x="14"  y="236" fill="var(--det)" font-weight="600">seconds[]</text>
+              <text x="110" y="236" fill="var(--ink-3)">exactos</text>
+              <text x="176" y="236" fill="var(--ink-3)">→</text>
+              <text x="200" y="236" fill="var(--det)" font-weight="600">minutes[]</text>
+              <text x="296" y="236" fill="var(--ink-3)">solo si hay &gt;60 s</text>
+              <text x="404" y="236" fill="var(--ink-3)">→</text>
+              <text x="428" y="236" fill="var(--det)" font-weight="600">total</text>
+              <text x="500" y="236" fill="var(--ink-3)">aproximado: true en los percentiles</text>
+            </g>
+            <text x="14" y="256" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10">
+              Si el total no cuadra con seconds, el error está en la agregación y no en la medición. Con 20 segundos no hay minutes: sería una copia del total.
+            </text>
+
+            <!-- techos -->
+            <line x1="14" y1="272" x2="886" y2="272" stroke="var(--rule)"/>
+            <text x="14" y="292" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="10.5" font-weight="600">
+              Los dos techos, y los dos se declaran
+            </text>
+            <text x="14" y="310" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              500 muestras/segundo → muestras &lt; n     ·     14.400 segundos (4 h) → seconds_truncated: true. Un log recortado en silencio se lee como completo.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El volcado periódico existe porque un contenedor que muere a mitad de prueba
+        se llevaría el log entero — que es justo el caso en el que más falta hace. Y
+        no es gratis: reescribe el archivo completo, así que el periodo se estira a
+        un minuto cuando la serie crece. Un <code>JSON.stringify</code> de 10&nbsp;MB
+        cada 10&nbsp;s metería pausas de GC <em>dentro</em> de lo que se está midiendo.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y <code>GET /status</code> no lee el archivo.</b> Reconstruye el total desde
+      la serie viva en cada llamada: entre dos volcados pueden haber pasado 60
+      segundos, y un <code>/status</code> que va un minuto por detrás invita a creer
+      que dejó de llegar tráfico. Leer <strong>no comprime</strong> nada — si lo
+      hiciera, un <code>/status</code> sobre el segundo en curso lo cerraría a medias
+      y sus percentiles dejarían de ser exactos.
+    </div>
+  </section>
+
+  <footer>
+    Track <code>C</code> de la PoC RPF Proof Ledger · 155 tests · los del mapper
+    corren sin nada, los del outbox y el relay necesitan Postgres, y
+    <code>npm run e2e:kms</code> necesita además AWS.
+    <br>Documentación completa en <code>c3/docs/</code>.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -83,7 +83,7 @@ esta prueba.
 |---|---|
 | **Security group mal asignado** | Falla en silencio: todo funciona, pero el aislamiento entre tenants no existe. Solo lo detecta una prueba explícita de conexión cruzada. |
 | **Resource policy de la cola** | `AccessDenied`, y el mensaje no distingue si falta la policy de la cola o el permiso de KMS. |
-| **Postgres efímero** | Una tarea de base que muere se lleva su outbox. En la demo se ve como pérdida de eventos aunque el patrón esté bien implementado. |
+| **Apagar borra las bases** | RDS no escala a cero: con `rds_persistente = false`, apagar destruye las instancias y con ellas el outbox pendiente. Entre corridas se ve como pérdida de eventos aunque el patrón esté bien implementado. |
 | **Sin `finally` en el relay** | Una excepción congela el relay para siempre; el health check sigue en verde. |
 | **Sin circuit breaker** | Una caída de SQS de 15 min manda todas las filas a `FAILED` por un problema que no era de ellas. |
 | **Dedup por contenido activada** | Con AES-GCM el ciphertext cambia siempre: SQS nunca detectaría un duplicado. |

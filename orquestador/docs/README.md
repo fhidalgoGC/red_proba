@@ -40,9 +40,10 @@ implementación.
 ## Arranque rápido
 
 ```bash
-# los dos receptores de C3
-cd c3 && npm start          # :3001 tenant-01, retardo 0,1-1,5 s
-cd c3 && npm run start:2    # :3002 tenant-02
+# los dos C3 (cada uno con SU base) y el consumidor C4
+cd c3 && npm start          # :3001 tenant-01 → rpf_c3_tenant01
+cd c3 && npm run start:2    # :3002 tenant-02 → rpf_c3_tenant02
+cd c4 && npm start          # worker · :3003 solo /health → rpf_c4
 
 # el orquestador
 cd orquestador && npm start # :3000 · Swagger en /docs
@@ -55,8 +56,14 @@ curl -X POST localhost:3000/batch -H 'content-type: application/json' -d '{
   "id": "xx01",
   "client": "all",
   "seconds": 20,
-  "request": { "client": { "min": 20, "max": 80 } }
+  "request": { "client": { "min": 20, "max": 80 } },
+  "events":  { "client": { "min": 1,  "max": 10 } }
 }'
+```
+
+`request` son **peticiones HTTP/s**; `events`, **cuántos documentos lleva cada
+una**. `eventos/s = peticiones/s × documentos por petición`. Sin `events`, el
+tamaño es fijo (1 por defecto) y las corridas viejas dan lo mismo.
 ```
 
 Devuelve **202 al momento**. El resultado se consulta aparte:

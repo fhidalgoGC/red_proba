@@ -21,6 +21,7 @@ import { BdService } from '../src/bd/bd.service';
 import { OutboxRepository, type Reclamado } from '../src/bd/outbox.repository';
 import { ConfigService } from '../src/config/config.service';
 import { RelayService } from '../src/relay/relay.service';
+import { MetricasService } from '../src/metricas/metricas.service';
 import type { PublicadorService, ResultadoEnvio } from '../src/relay/publicador.service';
 
 const ESQUEMA = 'c3_relay_test';
@@ -43,12 +44,15 @@ class PublicadorFalso {
     this.llamadas += 1;
     this.vistos.push(filas);
     const e6 = new Date().toISOString();
-    if (filas.length === 0) return { ok: [], reintentar: [], permanentes: [], e6 };
-    if (this.modo === 'ok') return { ok: filas.map((f) => f.id), reintentar: [], permanentes: [], e6 };
+    // `ms` fijo: es la duracion de la llamada a SQS, y aqui no hay SQS. Lo que
+    // se prueba de C-09 no es el numero, es que el relay lo reparta por prueba.
+    const ms = 1.5;
+    if (filas.length === 0) return { ok: [], reintentar: [], permanentes: [], e6, ms };
+    if (this.modo === 'ok') return { ok: filas.map((f) => f.id), reintentar: [], permanentes: [], e6, ms };
     const items = filas.map((f) => ({ id: f.id, codigo: 'X', detalle: 'de prueba' }));
     return this.modo === 'permanente'
-      ? { ok: [], reintentar: [], permanentes: items, e6 }
-      : { ok: [], reintentar: items, permanentes: [], e6 };
+      ? { ok: [], reintentar: [], permanentes: items, e6, ms }
+      : { ok: [], reintentar: items, permanentes: [], e6, ms };
   }
 }
 
@@ -59,7 +63,9 @@ const schedulerFalso = {
 } as never;
 
 function nuevoRelay(pub: PublicadorFalso): RelayService {
-  return new RelayService(config, outbox, pub as unknown as PublicadorService, schedulerFalso);
+  return new RelayService(
+    config, outbox, pub as unknown as PublicadorService, schedulerFalso, new MetricasService(),
+  );
 }
 
 /** Mete N filas PENDING directamente, sin pasar por el pipeline. */
@@ -258,7 +264,7 @@ test('el finally libera el guardia aunque el tick reviente', async () => {
   const roto = {
     publicar: () => Promise.reject(new Error('boom')),
   } as unknown as PublicadorService;
-  const relay = new RelayService(config, outbox, roto, schedulerFalso);
+  const relay = new RelayService(config, outbox, roto, schedulerFalso, new MetricasService());
 
   await relay.tick(); // no debe propagar
   assert.equal(relay.estado().ocupado, false, 'sin el finally, el relay queda congelado para siempre');

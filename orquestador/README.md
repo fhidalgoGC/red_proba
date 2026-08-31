@@ -9,7 +9,10 @@ cite después como parte del diseño del producto.
 
 **Documentación completa: [docs/](docs/)** — cómo funciona, la API, el informe,
 la configuración y las reglas que no se negocian.
-Diagramas: https://claude.ai/code/artifact/caafc080-acc9-4c54-8951-3902e3e1ed1d
+
+> **Diagramas** — [`docs/diagramas.html`](docs/diagramas.html) (HTML
+> autocontenido, se abre desde el disco) · publicado en
+> [**claude.ai**](https://claude.ai/code/artifact/caafc080-acc9-4c54-8951-3902e3e1ed1d)
 
 Diseño del track: [../docs/04-orquestador.md](../docs/04-orquestador.md)
 
@@ -82,20 +85,48 @@ manera más barata de detectar que esto se rompió.
 
 ## Tamaño de las plantillas
 
-Variado, no fijo. `pool.tamano_bytes: [1536, 3072]`.
+Variado, no fijo. `pool.tamano_bytes: [2048, 4096]`. **70 atributos hoja
+fijos**, +8 por ítem.
 
-**El piso está medido, no estimado.** El esqueleto del documento fiscal — los
-~52 atributos hoja de [02-payload](../docs/02-payload.md) — pesa **1.240 bytes
-canónicos sin un solo ítem**, y **1.403 con el ítem mínimo**. Un documento
-fiscal sin ítems no existe. Por eso **1 KB es inalcanzable** sin mutilar el
-documento, y un documento mutilado no compara con nada. El mínimo admisible es
-**1.411** (1.403 + 8 de relleno reservado), y la config lo rechaza por debajo.
+**El piso está medido, no estimado** — y sobre el peor caso, no el medio. El
+esqueleto del documento fiscal — los **70 atributos hoja** de
+[02-payload](../docs/02-payload.md) — pesa hasta **1.864 bytes canónicos sin un
+solo ítem**, y **2.024 con el ítem mínimo**. Un documento fiscal sin ítems no
+existe. El mínimo admisible es **2.032** (2.024 + 8 de relleno reservado), y la
+config lo rechaza por debajo; los 2 KB del defecto entran con 16 de margen.
+
+Se mide sobre el peor caso porque el esqueleto oscila ~25 bytes según el largo
+de los importes, del número de puerta y del nombre de calle. Un piso calibrado
+con el caso medio pasa mil plantillas y revienta en la dos mil, en
+`ajustarATamano`, a mitad del arranque del pool.
+
+**El techo también está fijado por fuera:** 4.096 es el límite de `kms:Sign` con
+`MessageType: RAW`, el que exige `ED25519_SHA_512`. A 4.096 bytes canónicos la
+firma entra con **margen cero** — un byte más y falla en C3, con un error de KMS
+que no apunta al generador.
 
 `items_por_documento: [1, 5]` se recorta solo si no entra en el tamaño
-sorteado: una plantilla de 1,5 KB no admite 5 ítems y el generador baja a los
-que quepan en vez de fallar.
+sorteado: una plantilla de 2 KB no admite 5 ítems y el generador baja a los que
+quepan en vez de fallar.
 
-Tamaño fijo sigue siendo expresable: `tamano_bytes: 3072`.
+Tamaño fijo sigue siendo expresable: `tamano_bytes: 4096`.
+
+### Verlas en disco
+
+Las plantillas viven **solo en memoria** durante una corrida. Para inspeccionarlas:
+
+```bash
+npm run volcar                 # → salida/plantillas/ (1.000 JSON + indice.csv)
+npm run volcar -- /otra/ruta
+```
+
+Escribe la forma **canónica** de cada una —la que se mide y la que C3 firma— más
+un `indice.csv` con `archivo,bytes_canonicos,items,relleno`. Es reproducible: la
+misma `pool.semilla` da las mismas 1.000 plantillas byte a byte.
+
+`reset-scratch` **no las borra**: vacía `salida/` pero salta
+`salida/plantillas/`. El manifiesto de expedientes es salida de una corrida; las
+plantillas son entrada fija de la prueba.
 
 **Consecuencia para la medición:** con tamaño variado, eventos/s y MB/s dejan
 de ser la misma métrica. Cuál de las dos se aplana primero es lo que dice si el
@@ -171,8 +202,8 @@ que un evento no llegue, porque cada una acusa a un culpable distinto:
 consulta de huecos compara el rango que ve contra los valores que tiene dentro,
 y ese rango lo definen los propios datos que llegaron — así que si falta la
 **cola** de un expediente, el `MAX` se desplaza y el rango sigue siendo denso.
-Y una tarea de Fargate que muere con su outbox efímero encima se lleva justo la
-cola.
+Y un relay que se detiene con filas todavía pendientes en su outbox se lleva
+justo la cola.
 
 **La solución**: el orquestador decide `rpf_id` y `sequence`, así que es el
 único que puede afirmar qué salió. Al cerrar la corrida escribe el manifiesto:
@@ -402,16 +433,16 @@ la última ventana.
   "por_tenant": [ ... ]
 }
 
-// c3/logs/xxt__tenant-01.json
+// c3/logs/xxt__tenant-01.json   (detalle por SEGUNDO; ver c3/docs/07-medicion.md)
 {
   "prueba": "xxt", "tenant": "tenant-01", "actualizado": "...",
-  "totales": { "peticiones": 800, "eventos": 800, "bytes": 1839121,
-               "bytes_medios_por_evento": 2299,
-               "event_ids_unicos": 800, "event_ids_duplicados": 0 },
-  "minutos": [ { "minuto": "...", "completo": false, "cerrado_por": "silencio",
-                 "peticiones": 800, "eventos": 800, "bytes": 1839121,
-                 "peticiones_por_s": 40.1, "eventos_por_s": 40.1,
-                 "ventana_activa_s": 19.9 } ]
+  "total":   { "request": { "init": 800, "completed": 800, "failed": 0, ... },
+               "events":  { "init": 800, "completed": 800, "bytes": 1839121,
+                            "event_ids_unicos": 800, "event_ids_duplicados": 0,
+                            "steps": { "canonical": {...}, "sign": {...}, ... } },
+               "sqs":     { "batches": 80, "messages": 800, "ok": 800, ... } },
+  "seconds": [ { "seg": 1, "at": "...", "metrics": { ... } } ],
+  "minutes": [ ... ]
 }
 ```
 
@@ -491,6 +522,12 @@ tope de 64 le descartaba un tercio de la corrida y P4 quedaba sin respuesta.
 
 ## Red
 
-Llega a C3 por VPC peering (ORQ-06) y Cloud Map (`api-NN.poc.local`).
-**No se conecta a C4 en absoluto.** Si necesita verificar lo que llegó, lee
+Corre **dentro de la VPC de C3**, en `sg-orq` (ORQ-06). Sin peering: resuelve
+`api-NN.poc.local` por Cloud Map, que ya vive en esa VPC, y llega al API por
+8080. No alcanza ninguna base — su SG no está en el ingress de 5432 de ningún
+tenant.
+
+**No se conecta a C4 en absoluto**, ni por red ni por IAM: del lado de C3 no hay
+ruta hacia C4, su task role no tiene `sqs` ni `kms`, y la resource policy de la
+cola solo nombra a los roles de C3 y C4. Si necesita verificar lo que llegó, lee
 métricas, no la cola.

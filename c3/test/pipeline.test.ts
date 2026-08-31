@@ -35,6 +35,7 @@ import { OutboxRepository } from '../src/bd/outbox.repository';
 import { MapperService } from '../src/mapper/mapper.service';
 import { PARTY_ID_LARGO } from '../src/mapper/contrato';
 import { PipelineService } from '../src/pipeline/pipeline.service';
+import { MetricasService } from '../src/metricas/metricas.service';
 
 const VALIDO = JSON.parse(
   readFileSync(join(process.cwd(), 'test', 'vectores', 'documento-valido.json'), 'utf8'),
@@ -80,7 +81,9 @@ before(async () => {
   await pseudonimo.onModuleInit();
   firmador = new FirmadorService(config);
   cifrador = new CifradorService(config);
-  pipeline = new PipelineService(pseudonimo, new MapperService(), firmador, cifrador, outbox);
+  pipeline = new PipelineService(
+    pseudonimo, new MapperService(), firmador, cifrador, outbox, new MetricasService(),
+  );
 });
 
 after(async () => {
@@ -115,7 +118,7 @@ test('un documento valido recorre el pipeline entero', async () => {
   assert.equal(r.procesados.length, 1);
 
   const p = r.procesados[0]!;
-  assert.equal(p.bytesCanonicos, 3072);
+  assert.equal(p.bytesCanonicos, 4096);
   assert.match(p.payloadHash, /^[0-9a-f]{64}$/);
   assert.equal(p.rpfId, VALIDO['rpf_id']);
   // El sobre pesa mas que el canonico: firma, IV, tag, edk y el ~33% de base64.

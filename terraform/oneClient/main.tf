@@ -29,7 +29,6 @@ module "network" {
   source = "../modules/network"
 
   name_prefix = var.name_prefix
-  cidr_orq    = var.cidr_orq
   cidr_c3     = var.cidr_c3
   cidr_c4     = var.cidr_c4
   az_count    = var.az_count
@@ -88,6 +87,9 @@ resource "aws_ecs_cluster" "c4" {
   tags = { Domain = "c4", Track = "T" }
 }
 
+# El cluster de ORQ es una agrupacion LOGICA, no una frontera de red: sus
+# tareas corren en las subnets de C3. Sigue separado para que los logs, las
+# metricas y el apagado del arnes no se mezclen con los del participante.
 resource "aws_ecs_cluster" "orq" {
   name = "${var.name_prefix}-orq"
   setting {
@@ -209,7 +211,10 @@ module "orq" {
 
   name_prefix = var.name_prefix
   cluster_arn = aws_ecs_cluster.orq.arn
-  subnets_app = module.network.subnets_app["orq"]
+  # El orquestador corre DENTRO de la VPC de C3: sin peering que mantener y
+  # resolviendo api-NN.poc.local directo. Lo que lo separa de los tenants es
+  # su security group, igual que un tenant se separa de otro.
+  subnets_app = module.network.subnets_app["c3"]
   sg_id       = module.security.sg_orq_id
 
   rol_ejecucion_arn = module.security.rol_ejecucion_arn

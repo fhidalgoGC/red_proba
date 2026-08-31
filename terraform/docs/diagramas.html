@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Reset minimo — el mismo que aplica el visor de artefactos. */
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+</style>
+<title>La infraestructura, dibujada</title>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf; --rule-fine:#dde1db;
+    --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    /* azul = lo que Terraform crea y gobierna · ambar = la perilla, lo que se apaga
+       rojo = la prohibicion: lo que NO existe y por eso no se puede aflojar */
+    --det:#0f5fa0; --det-soft:#0f5fa01f;
+    --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c; --alarma-soft:#a32a1c14;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 34rem; --wide: 64rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438; --rule-fine:#232b2f;
+      --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+      --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+      --nada:#8f9aa1; --alarma:#e2705c; --alarma-soft:#e2705c1f; }
+  }
+  :root[data-theme="dark"] { --ground:#151a1d; --panel:#1b2125; --raised:#212a2e; --rule:#2b3438;
+    --rule-fine:#232b2f; --ink:#e4e9e6; --ink-2:#a4b0b4; --ink-3:#7b878c;
+    --det:#3f8dcc; --det-soft:#3f8dcc26; --ident:#cf801f; --ident-soft:#cf801f26;
+    --nada:#8f9aa1; --alarma:#e2705c; --alarma-soft:#e2705c1f; }
+  :root[data-theme="light"] { --ground:#edefec; --panel:#e3e6e2; --raised:#f7f8f6; --rule:#d0d5cf;
+    --rule-fine:#dde1db; --ink:#171c1f; --ink-2:#4a555a; --ink-3:#78838a;
+    --det:#0f5fa0; --det-soft:#0f5fa01f; --ident:#c96a06; --ident-soft:#c96a061f;
+    --nada:#7f8a92; --alarma:#a32a1c; --alarma-soft:#a32a1c14; }
+
+  body { background: var(--ground); color: var(--ink); font-family: var(--serif);
+         font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .hoja { max-width: var(--wide); margin: 0 auto; padding: 3.5rem 1.5rem 6rem;
+          display: flex; flex-direction: column; gap: 2.5rem; }
+  .prosa { max-width: var(--measure); }
+  .prosa > * + * { margin-top: 1rem; }
+
+  h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; }
+  h1 { font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.02em; }
+  h2 { font-size: 1.55rem; letter-spacing: -0.01em; }
+  p { margin: 0; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; font-variant-numeric: tabular-nums; }
+  p code, li code, td code, figcaption code { background: var(--panel); padding: 0.08em 0.34em; border-radius: 3px; }
+
+  .eyebrow { font-family: var(--sans); font-size: 0.7rem; font-weight: 600;
+             letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .paso { font-family: var(--mono); font-size: 0.78rem; color: var(--det);
+          letter-spacing: 0.06em; font-weight: 600; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 2rem; }
+  header .standfirst { max-width: var(--measure); margin-top: 1rem; font-size: 1.08rem; color: var(--ink-2); }
+
+  section { display: flex; flex-direction: column; gap: 1.3rem; }
+  hr.sep { border: 0; border-top: 1px solid var(--rule); margin: 0.75rem 0 0; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .lienzo { overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; }
+  figcaption { font-family: var(--sans); font-size: 0.78rem; color: var(--ink-2);
+               line-height: 1.55; max-width: 64ch; }
+
+  .tabla-envoltorio { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.45rem 0.85rem 0.45rem 0;
+           border-bottom: 1px solid var(--rule-fine); vertical-align: top; }
+  th { font-family: var(--sans); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  pre { background: var(--raised); border: 1px solid var(--rule); border-left: 2px solid var(--det);
+        border-radius: 3px; padding: 0.8rem 1rem; overflow-x: auto;
+        font-family: var(--mono); font-size: 0.78rem; line-height: 1.58; }
+  pre .c { color: var(--ink-3); }
+  pre .k { color: var(--det); }
+  pre .s { color: var(--ident); }
+
+  .nota { border-left: 2px solid var(--ident); background: var(--ident-soft);
+          border-radius: 0 3px 3px 0; padding: 0.75rem 1rem; max-width: 46rem;
+          font-size: 0.95rem; }
+  .nota b { color: var(--ident); }
+  .nota.veto { border-left-color: var(--alarma); background: var(--alarma-soft); }
+  .nota.veto b { color: var(--alarma); }
+
+  .cifras { display: flex; flex-wrap: wrap; gap: 0.4rem 2.2rem; }
+  .cifra { display: flex; flex-direction: column; gap: 0.1rem; }
+  .cifra .v { font-family: var(--mono); font-size: 1.25rem; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .cifra .k { font-family: var(--sans); font-size: 0.67rem; letter-spacing: 0.08em;
+              text-transform: uppercase; color: var(--ink-3); }
+
+  .leyenda { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+             font-family: var(--sans); font-size: 0.77rem; color: var(--ink-2); }
+  .leyenda span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .leyenda i { width: 0.75rem; height: 0.75rem; border-radius: 2px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 1.4rem; font-family: var(--sans);
+           font-size: 0.78rem; color: var(--ink-3); max-width: 62ch; }
+  footer a { color: var(--det); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="hoja">
+
+  <header>
+    <div class="eyebrow">PoC RPF Proof Ledger · track T</div>
+    <h1>La infraestructura, dibujada</h1>
+    <p class="standfirst">
+      Dos VPC que no se tocan, cincuenta y una bases, cuatro llaves con un veto
+      escrito. Lo que sostiene los invariantes de esta PoC no es una regla que
+      alguien recuerde respetar: es lo que <em>no existe</em> en el inventario.
+    </p>
+  </header>
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">LA TOPOLOGÍA</div>
+      <h2>Un solo hilo cruza la frontera</h2>
+      <p>
+        C3 es el participante: firma y cifra. C4 es el operador neutro: descifra,
+        verifica y persiste. Entre los dos no hay ruta de red — el único canal es
+        una cola FIFO, y eso no es una política, es la ausencia de un recurso.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 420" role="img" width="900" style="min-width:700px"
+             aria-label="Dos VPC separadas por una frontera sin ruta de red; el orquestador vive dentro de la VPC de C3 y la única cosa que cruza la frontera es la cola SQS FIFO">
+          <defs>
+            <marker id="f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+
+            <!-- frontera -->
+            <line x1="530" y1="34" x2="530" y2="406" stroke="var(--alarma)" stroke-width="1.4"
+                  stroke-dasharray="5 5" opacity="0.65"/>
+            <text x="530" y="26" text-anchor="middle" fill="var(--alarma)" font-size="10" font-weight="600">
+              FRONTERA · sin peering, sin Transit Gateway, sin PrivateLink
+            </text>
+
+            <!-- VPC C3 -->
+            <rect x="16" y="56" width="420" height="330" rx="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="26" y="48" fill="var(--det)" font-size="10.5" font-weight="600">VPC C3 · 10.101.0.0/16 · PARTICIPANTE</text>
+
+            <rect x="36" y="76" width="176" height="46" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="124" y="95" text-anchor="middle" fill="var(--ident)" font-size="11.5" font-weight="600">sg-orq</text>
+            <text x="124" y="111" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">driver de carga · andamio</text>
+
+            <line x1="124" y1="122" x2="124" y2="170" stroke="var(--ident)" stroke-width="1.5"
+                  marker-end="url(#f1)" color="var(--ident)"/>
+            <text x="134" y="150" fill="var(--ident)" font-size="9.5">8080 · api-NN.poc.local</text>
+
+            <!-- tenants -->
+            <rect x="36" y="176" width="384" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="46" y="200" fill="var(--ink-3)" font-size="9.5">sg-tenant-01</text>
+            <rect x="150" y="184" width="86" height="24" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="193" y="200" text-anchor="middle" fill="var(--det)" font-size="10">API</text>
+            <line x1="240" y1="196" x2="278" y2="196" stroke="currentColor" stroke-width="1.2"/>
+            <text x="259" y="192" text-anchor="middle" fill="var(--ink-3)" font-size="8.5">5432</text>
+            <rect x="282" y="184" width="128" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="346" y="200" text-anchor="middle" fill="currentColor" font-size="10">RDS Postgres</text>
+
+            <rect x="36" y="224" width="384" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="46" y="248" fill="var(--ink-3)" font-size="9.5">sg-tenant-02</text>
+            <rect x="150" y="232" width="86" height="24" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="193" y="248" text-anchor="middle" fill="var(--det)" font-size="10">API</text>
+            <line x1="240" y1="244" x2="278" y2="244" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="282" y="232" width="128" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="346" y="248" text-anchor="middle" fill="currentColor" font-size="10">RDS Postgres</text>
+
+            <text x="228" y="286" text-anchor="middle" fill="var(--ink-3)" font-size="11">…47 más</text>
+
+            <rect x="36" y="296" width="384" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="46" y="320" fill="var(--ink-3)" font-size="9.5">sg-tenant-50</text>
+            <rect x="150" y="304" width="86" height="24" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="193" y="320" text-anchor="middle" fill="var(--det)" font-size="10">API</text>
+            <line x1="240" y1="316" x2="278" y2="316" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="282" y="304" width="128" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="346" y="320" text-anchor="middle" fill="currentColor" font-size="10">RDS Postgres</text>
+
+            <text x="36" y="360" fill="var(--ink-3)" font-size="9.5" font-family="ui-sans-serif,system-ui">
+              endpoints: ecr.api · ecr.dkr · secretsmanager · kms · logs · sqs  +  gateway S3
+            </text>
+            <text x="36" y="376" fill="var(--ink-3)" font-size="9.5" font-family="ui-sans-serif,system-ui">
+              sin NAT · sin internet gateway · sin ruta a 0.0.0.0/0
+            </text>
+
+            <!-- SQS -->
+            <line x1="436" y1="228" x2="474" y2="228" stroke="var(--det)" stroke-width="1.6" marker-end="url(#f1)" color="var(--det)"/>
+            <text x="455" y="220" text-anchor="middle" fill="var(--det)" font-size="9">SendMessage</text>
+
+            <rect x="478" y="204" width="104" height="52" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="2"/>
+            <text x="530" y="226" text-anchor="middle" fill="var(--det)" font-size="11.5" font-weight="600">SQS FIFO</text>
+            <text x="530" y="242" text-anchor="middle" fill="var(--det)" font-size="9">el único canal</text>
+
+            <line x1="586" y1="228" x2="650" y2="228" stroke="var(--det)" stroke-width="1.6" marker-end="url(#f1)" color="var(--det)"/>
+            <text x="618" y="220" text-anchor="middle" fill="var(--det)" font-size="9">Receive</text>
+
+            <!-- VPC C4 -->
+            <rect x="656" y="56" width="228" height="330" rx="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="666" y="48" fill="var(--det)" font-size="10.5" font-weight="600">VPC C4 · 10.102.0.0/16 · OPERADOR</text>
+
+            <rect x="676" y="176" width="188" height="112" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="686" y="196" fill="var(--ink-3)" font-size="9.5">sg-c4</text>
+            <rect x="696" y="204" width="148" height="26" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="770" y="221" text-anchor="middle" fill="var(--det)" font-size="10">consumidor</text>
+            <line x1="770" y1="230" x2="770" y2="248" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="696" y="248" width="148" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="770" y="265" text-anchor="middle" fill="currentColor" font-size="10">RDS Postgres</text>
+
+            <text x="676" y="360" fill="var(--ink-3)" font-size="9.5" font-family="ui-sans-serif,system-ui">
+              los mismos 6 endpoints
+            </text>
+            <text x="676" y="376" fill="var(--ink-3)" font-size="9.5" font-family="ui-sans-serif,system-ui">
+              + gateway S3
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El orquestador está <strong>dentro</strong> de la VPC de C3, no en una
+        tercera. Lo que lo separa de los tenants es lo mismo que separa a un
+        tenant de otro: un security group. Y lo único que cruza la línea roja es
+        la cola — no porque una regla lo prohíba, sino porque no hay nada más
+        que pueda cruzarla.
+      </figcaption>
+    </figure>
+
+    <div class="leyenda">
+      <span><i style="background:var(--det)"></i> lo que Terraform crea y gobierna</span>
+      <span><i style="background:var(--ident)"></i> andamio: desaparece con la prueba</span>
+      <span><i style="background:var(--alarma)"></i> la prohibición — lo que no existe</span>
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">LA DECISIÓN · ORQ-06</div>
+      <h2>Por qué el orquestador perdió su VPC</h2>
+      <p>
+        Tenía una, con un peering hacia C3. No costaba por hora y funcionaba. El
+        problema era otro: dejaba <strong>una conexión entre VPC en el
+        inventario</strong>.
+      </p>
+      <p>
+        Con ese peering, quien audita «SQS es el único canal» tiene que aceptar un
+        razonamiento — «el peering no es transitivo, conectar ORQ a C3 no le da a
+        C3 ningún camino hacia C4». Sin él, mira el diagrama. Esa diferencia es
+        todo lo que se ganó.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 310" role="img" width="900" style="min-width:700px"
+             aria-label="Comparación: antes tres VPC unidas por un peering entre ORQ y C3; ahora dos VPC y el orquestador dentro de la de C3, sin ninguna conexión entre VPC">
+          <defs>
+            <marker id="f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+            <line x1="450" y1="24" x2="450" y2="292" stroke="var(--rule)" stroke-width="1"/>
+
+            <!-- ANTES -->
+            <text x="30" y="30" fill="var(--ink-3)" font-size="10" font-weight="600"
+                  font-family="ui-sans-serif,system-ui" letter-spacing="1.4">ANTES · 3 VPC</text>
+
+            <rect x="145" y="52" width="150" height="42" rx="4" fill="none" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="220" y="78" text-anchor="middle" fill="var(--ident)" font-size="11.5" font-weight="600">VPC ORQ</text>
+
+            <line x1="220" y1="94" x2="220" y2="130" stroke="var(--ident)" stroke-width="2"
+                  marker-end="url(#f2)" color="var(--ident)"/>
+            <text x="230" y="116" fill="var(--ident)" font-size="10">peering + 2 rutas</text>
+
+            <rect x="145" y="134" width="150" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="220" y="160" text-anchor="middle" fill="currentColor" font-size="11.5" font-weight="600">VPC C3</text>
+
+            <line x1="220" y1="176" x2="220" y2="212" stroke="var(--det)" stroke-width="1.6"
+                  marker-end="url(#f2)" color="var(--det)"/>
+            <text x="230" y="198" fill="var(--det)" font-size="10">SQS</text>
+
+            <rect x="145" y="216" width="150" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="220" y="242" text-anchor="middle" fill="currentColor" font-size="11.5" font-weight="600">VPC C4</text>
+
+            <text x="30" y="284" fill="var(--ident)" font-size="10.5" font-family="ui-sans-serif,system-ui">
+              1 peering · 2 rutas · 1 zone association · 3 endpoints extra
+            </text>
+
+            <!-- AHORA -->
+            <text x="480" y="30" fill="var(--det)" font-size="10" font-weight="600"
+                  font-family="ui-sans-serif,system-ui" letter-spacing="1.4">AHORA · 2 VPC</text>
+
+            <rect x="585" y="52" width="200" height="124" rx="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="595" y="72" fill="currentColor" font-size="11.5" font-weight="600">VPC C3</text>
+
+            <rect x="603" y="82" width="164" height="34" rx="3" fill="none" stroke="var(--ident)" stroke-width="1.4"/>
+            <text x="685" y="103" text-anchor="middle" fill="var(--ident)" font-size="10">sg-orq · driver</text>
+
+            <line x1="685" y1="116" x2="685" y2="130" stroke="var(--ident)" stroke-width="1.4"
+                  marker-end="url(#f2)" color="var(--ident)"/>
+
+            <rect x="603" y="132" width="164" height="34" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.4"/>
+            <text x="685" y="153" text-anchor="middle" fill="var(--det)" font-size="10">50 × sg-tenant · API + RDS</text>
+
+            <line x1="685" y1="176" x2="685" y2="212" stroke="var(--det)" stroke-width="1.6"
+                  marker-end="url(#f2)" color="var(--det)"/>
+            <text x="695" y="198" fill="var(--det)" font-size="10">SQS</text>
+
+            <rect x="585" y="216" width="200" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="685" y="242" text-anchor="middle" fill="currentColor" font-size="11.5" font-weight="600">VPC C4</text>
+
+            <text x="480" y="284" fill="var(--det)" font-size="10.5" font-family="ui-sans-serif,system-ui">
+              0 conexiones entre VPC · 0 recursos aws_route
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        La única arista que desaparece es la ámbar. Lo demás es idéntico: el
+        driver sigue llegando al API por 8080, ahora resolviendo
+        <code>api-NN.poc.local</code> en la zona de Cloud Map que ya vivía en esa
+        VPC. De paso se ahorran tres interface endpoints —los
+        <code>ecr</code>+<code>logs</code> que ORQ tenía duplicados— y el suelo de
+        endpoints baja de $3,60 a $2,88 al día por AZ.
+      </figcaption>
+    </figure>
+
+    <div class="nota veto">
+      <b>Lo que sigue impidiendo que C3 llame al orquestador</b> no era el peering
+      —era bidireccional— sino que <code>sg-orq</code> no tiene ninguna regla de
+      entrada. Los security groups son stateful: las respuestas fluyen igual y C3
+      no puede iniciar nada. Es la unidireccionalidad que daba PrivateLink, sin
+      montar un NLB delante de los 50 API.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">D-02 · AISLAMIENTO ENTRE TENANTS</div>
+      <h2>Cincuenta grupos que se apuntan a sí mismos</h2>
+      <p>
+        La app y su base comparten <code>sg-tenant-NN</code>, y la regla de entrada
+        a 5432 tiene como origen <strong>el propio grupo</strong>. El descarte
+        ocurre en la interfaz de red, antes de que el paquete toque el proceso de
+        Postgres: mismo enforcement que separar VPC, con 50 recursos en vez de 50
+        redes.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 250" role="img" width="900" style="min-width:700px"
+             aria-label="El API del tenant 08 intenta conectar a la base del tenant 07 y el paquete se descarta en la interfaz de red, dando timeout; dentro de cada grupo la conexión al puerto 5432 sí está permitida">
+          <defs>
+            <marker id="f3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+            <!-- grupo 07 -->
+            <rect x="30" y="60" width="330" height="110" rx="5" fill="none" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="40" y="52" fill="var(--det)" font-size="10.5" font-weight="600">sg-tenant-07</text>
+            <rect x="52" y="84" width="112" height="30" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="108" y="104" text-anchor="middle" fill="var(--det)" font-size="10.5">API 07</text>
+            <rect x="226" y="84" width="112" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="282" y="104" text-anchor="middle" fill="currentColor" font-size="10.5">RDS 07</text>
+            <line x1="168" y1="99" x2="222" y2="99" stroke="var(--det)" stroke-width="1.5" marker-end="url(#f3)" color="var(--det)"/>
+            <text x="195" y="136" text-anchor="middle" fill="var(--det)" font-size="9.5">5432 ✓</text>
+            <text x="195" y="150" text-anchor="middle" fill="var(--ink-3)" font-size="9">origen = el propio grupo</text>
+
+            <!-- grupo 08 -->
+            <rect x="530" y="60" width="330" height="110" rx="5" fill="none" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="540" y="52" fill="var(--det)" font-size="10.5" font-weight="600">sg-tenant-08</text>
+            <rect x="552" y="84" width="112" height="30" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.2"/>
+            <text x="608" y="104" text-anchor="middle" fill="var(--det)" font-size="10.5">API 08</text>
+            <rect x="726" y="84" width="112" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="782" y="104" text-anchor="middle" fill="currentColor" font-size="10.5">RDS 08</text>
+            <line x1="668" y1="99" x2="722" y2="99" stroke="var(--det)" stroke-width="1.5" marker-end="url(#f3)" color="var(--det)"/>
+            <text x="695" y="136" text-anchor="middle" fill="var(--det)" font-size="9.5">5432 ✓</text>
+
+            <!-- el intento cruzado -->
+            <path d="M552,196 L456,196 L456,196 L360,196" fill="none" stroke="var(--alarma)" stroke-width="1.6"
+                  stroke-dasharray="6 4"/>
+            <path d="M608,114 L608,196" fill="none" stroke="var(--alarma)" stroke-width="1.6" stroke-dasharray="6 4"/>
+            <path d="M360,196 L282,196 L282,118" fill="none" stroke="var(--alarma)" stroke-width="1.6" stroke-dasharray="6 4"/>
+
+            <!-- la X en la ENI -->
+            <line x1="292" y1="128" x2="272" y2="148" stroke="var(--alarma)" stroke-width="2.4"/>
+            <line x1="272" y1="128" x2="292" y2="148" stroke="var(--alarma)" stroke-width="2.4"/>
+
+            <text x="456" y="188" text-anchor="middle" fill="var(--alarma)" font-size="10">
+              psql -h &lt;endpoint del 07&gt;
+            </text>
+            <text x="456" y="222" text-anchor="middle" fill="var(--alarma)" font-size="10.5" font-weight="600">
+              DEBE dar timeout — el paquete se descarta en la ENI
+            </text>
+            <text x="456" y="238" text-anchor="middle" fill="var(--ink-3)" font-size="9">
+              si dice «password authentication failed», la conexión TCP se estableció y el aislamiento NO existe
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        El diagnóstico está en el mensaje de error, no en el éxito o el fracaso.
+        Un timeout prueba que el descarte fue en la red; un error de credenciales
+        prueba que llegó al proceso. Por eso las 51 bases comparten la misma
+        contraseña: con claves distintas, un SG mal asignado se disfrazaría de
+        problema de credenciales.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Falla en silencio.</b> Un error de índice en el <code>for_each</code> no
+      rompe nada visible: simplemente el tenant 08 puede leer la base del 07.
+      Ningún health check lo detecta, ningún log lo menciona. La única forma de
+      saberlo es correr la conexión cruzada a propósito.
+    </div>
+  </section>
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">D-04 · LAS CUATRO LLAVES</div>
+      <h2>La asimetría es el invariante</h2>
+      <p>
+        Ninguna llave hace el trabajo de otra, y en tres de las cuatro hay un
+        <code>Deny</code> explícito. No es una convención: un <code>Deny</code> en
+        la key policy <strong>gana sobre cualquier <code>Allow</code> de IAM</strong>,
+        incluso el de un administrador.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 320" role="img" width="900" style="min-width:720px"
+             aria-label="Las cuatro llaves de KMS con lo que cada dominio puede hacer: C3 firma, pseudonimiza y cifra pero no descifra; C4 descifra y lee la pública pero nunca firma ni pseudonimiza">
+          <defs>
+            <marker id="f4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <g font-family="ui-monospace,Menlo,monospace">
+            <text x="82" y="34" text-anchor="middle" fill="var(--det)" font-size="11.5" font-weight="600">C3</text>
+            <text x="82" y="48" text-anchor="middle" fill="var(--ink-3)" font-size="9">participante</text>
+            <text x="818" y="34" text-anchor="middle" fill="var(--det)" font-size="11.5" font-weight="600">C4</text>
+            <text x="818" y="48" text-anchor="middle" fill="var(--ink-3)" font-size="9">operador neutro</text>
+
+            <line x1="82" y1="58" x2="82" y2="300" stroke="var(--rule)" stroke-width="1"/>
+            <line x1="818" y1="58" x2="818" y2="300" stroke="var(--rule)" stroke-width="1"/>
+
+            <!-- fila 1 · firma -->
+            <rect x="330" y="70" width="240" height="38" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="450" y="86" text-anchor="middle" fill="var(--det)" font-size="11" font-weight="600">Ed25519 · firma</text>
+            <text x="450" y="100" text-anchor="middle" fill="var(--ink-3)" font-size="9">vive en C3</text>
+            <line x1="88" y1="89" x2="324" y2="89" stroke="var(--det)" stroke-width="1.5" marker-end="url(#f4)" color="var(--det)"/>
+            <text x="206" y="82" text-anchor="middle" fill="var(--det)" font-size="9.5">kms:Sign</text>
+            <line x1="576" y1="82" x2="812" y2="82" stroke="currentColor" stroke-width="1.2" marker-end="url(#f4)"/>
+            <text x="694" y="75" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">GetPublicKey</text>
+            <line x1="576" y1="100" x2="812" y2="100" stroke="var(--alarma)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <line x1="686" y1="93" x2="702" y2="107" stroke="var(--alarma)" stroke-width="2.2"/>
+            <line x1="702" y1="93" x2="686" y2="107" stroke="var(--alarma)" stroke-width="2.2"/>
+            <text x="740" y="112" text-anchor="middle" fill="var(--alarma)" font-size="9.5" font-weight="600">DENY kms:Sign</text>
+
+            <!-- fila 2 · hmac -->
+            <rect x="330" y="132" width="240" height="38" rx="4" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.6"/>
+            <text x="450" y="148" text-anchor="middle" fill="var(--det)" font-size="11" font-weight="600">HMAC · pseudonimización</text>
+            <text x="450" y="162" text-anchor="middle" fill="var(--ink-3)" font-size="9">vive en C3</text>
+            <line x1="88" y1="151" x2="324" y2="151" stroke="var(--det)" stroke-width="1.5" marker-end="url(#f4)" color="var(--det)"/>
+            <text x="206" y="144" text-anchor="middle" fill="var(--det)" font-size="9.5">GenerateMac</text>
+            <line x1="576" y1="151" x2="812" y2="151" stroke="var(--alarma)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <line x1="686" y1="144" x2="702" y2="158" stroke="var(--alarma)" stroke-width="2.2"/>
+            <line x1="702" y1="144" x2="686" y2="158" stroke="var(--alarma)" stroke-width="2.2"/>
+            <text x="740" y="168" text-anchor="middle" fill="var(--alarma)" font-size="9.5" font-weight="600">DENY GenerateMac</text>
+
+            <!-- fila 3 · mensajes -->
+            <rect x="330" y="194" width="240" height="38" rx="4" fill="var(--ident-soft)" stroke="var(--ident)" stroke-width="1.6"/>
+            <text x="450" y="210" text-anchor="middle" fill="var(--ident)" font-size="11" font-weight="600">simétrica · mensajes</text>
+            <text x="450" y="224" text-anchor="middle" fill="var(--ink-3)" font-size="9">vive en C4</text>
+            <line x1="88" y1="206" x2="324" y2="206" stroke="var(--ident)" stroke-width="1.5" marker-end="url(#f4)" color="var(--ident)"/>
+            <text x="206" y="199" text-anchor="middle" fill="var(--ident)" font-size="9.5">GenerateDataKey</text>
+            <line x1="88" y1="224" x2="324" y2="224" stroke="var(--alarma)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <line x1="198" y1="217" x2="214" y2="231" stroke="var(--alarma)" stroke-width="2.2"/>
+            <line x1="214" y1="217" x2="198" y2="231" stroke="var(--alarma)" stroke-width="2.2"/>
+            <text x="160" y="243" text-anchor="middle" fill="var(--alarma)" font-size="9.5" font-weight="600">DENY kms:Decrypt</text>
+            <line x1="576" y1="213" x2="812" y2="213" stroke="var(--ident)" stroke-width="1.5" marker-end="url(#f4)" color="var(--ident)"/>
+            <text x="694" y="206" text-anchor="middle" fill="var(--ident)" font-size="9.5">kms:Decrypt</text>
+
+            <!-- fila 4 · cola -->
+            <rect x="330" y="262" width="240" height="38" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="450" y="278" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">simétrica · cola en reposo</text>
+            <text x="450" y="292" text-anchor="middle" fill="var(--ink-3)" font-size="9">vive en C4 · la usa también sqs.amazonaws.com</text>
+            <line x1="88" y1="281" x2="324" y2="281" stroke="currentColor" stroke-width="1.2" marker-end="url(#f4)"/>
+            <text x="206" y="274" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">GenerateDataKey</text>
+            <line x1="576" y1="281" x2="812" y2="281" stroke="currentColor" stroke-width="1.2" marker-end="url(#f4)"/>
+            <text x="694" y="274" text-anchor="middle" fill="var(--ink-3)" font-size="9.5">Decrypt</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Leído en una línea: <strong>C4 descifra pero no firma; C3 firma y cifra
+        pero no descifra.</strong> El orquestador no aparece porque no tiene
+        política de identidad de KMS — su task role solo alcanza para hacer pull
+        de ECR y escribir logs.
+      </figcaption>
+    </figure>
+
+    <div class="nota veto">
+      <b>La desviación que hay que decir en la demo.</b> El diseño pide dos cuentas
+      AWS en OUs separadas; esta PoC corre en <strong>una sola</strong>. El
+      <code>Deny</code> sigue siendo real y verificable, pero un admin de la cuenta
+      <em>puede editar la key policy</em>. Con dos cuentas no podría.
+    </div>
+
+    <pre><span class="c"># asumiendo el rol de C4 — DEBE dar AccessDenied</span>
+aws kms sign --key-id <span class="s">&lt;firma&gt;</span> --message $(echo -n test | base64) \
+  --signing-algorithm <span class="k">ED25519_SHA_512</span> --message-type <span class="k">RAW</span>
+
+<span class="c"># asumiendo el rol de C4 — DEBE funcionar</span>
+aws kms get-public-key --key-id <span class="s">&lt;firma&gt;</span></pre>
+  </section>
+
+  <hr class="sep">

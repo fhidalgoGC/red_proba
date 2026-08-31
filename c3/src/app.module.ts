@@ -12,7 +12,8 @@ import { MapperService } from './mapper/mapper.service';
 import { PipelineService } from './pipeline/pipeline.service';
 import { PublicadorService } from './relay/publicador.service';
 import { RelayService } from './relay/relay.service';
-import { RegistroService } from './registro.service';
+import { MetricasService } from './metricas/metricas.service';
+import { RegistroService } from './metricas/registro.service';
 
 @Module({
   // El relay vive en el MISMO proceso que el API (D-07): un @Interval, no un
@@ -23,6 +24,11 @@ import { RegistroService } from './registro.service';
     ConfigService,
     BdService,
     OutboxRepository,
+    // C-09 · MetricasService acumula, RegistroService vuelca. Separados porque
+    // el camino caliente solo toca al primero: escribir un JSON de megas desde
+    // el mismo objeto que cuenta eventos meteria la pausa de la escritura
+    // dentro de lo que se esta midiendo.
+    MetricasService,
     RegistroService,
     // Con factory: el constructor del mapper toma el rango de bytes como
     // parametros para que los tests puedan apretarlo, y Nest no sabe inyectar

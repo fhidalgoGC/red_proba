@@ -48,7 +48,7 @@ test('vector fijo de tamano: el ejemplo pesa 3.072 bytes canonicos', () => {
   // El party_id real mide lo mismo que el placeholder, asi que sustituirlo
   // no puede mover el numero. Ese es todo el punto del largo fijo.
   const r = mapper.canonizar(clon(), PARTY_ID);
-  assert.equal(r.bytes, 3072);
+  assert.equal(r.bytes, 4096);
   assert.equal(r.bytes, Buffer.byteLength(canonicalize(r.payload), 'utf8'));
 });
 
@@ -286,16 +286,21 @@ test('los venenos no se pisan: cada motivo se probo al menos una vez', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('un documento bien formado nunca es demasiado chico', () => {
-  // Con el relleno vaciado, el ejemplo sigue pesando 1.588 bytes: por encima
-  // del minimo de 1.024. Es a proposito — el piso duro medido son 1.433, asi
-  // que el minimo por defecto no puede rechazar un documento legitimo.
+  // Con el relleno vaciado, el ejemplo sigue pesando 2.344 bytes: muy por
+  // encima del minimo por defecto de 1.024. Es a proposito — el piso duro
+  // medido del documento de 70 atributos son 2.024 con un solo item, asi que
+  // el minimo por defecto no puede rechazar un documento legitimo.
   const doc = clon();
   doc['padding'] = '';
-  assert.equal(mapper.canonizar(doc, PARTY_ID).bytes, 1588);
+  assert.equal(mapper.canonizar(doc, PARTY_ID).bytes, 2344);
 });
 
 test('el minimo se dispara cuando de verdad se aprieta', () => {
-  const estricto = new MapperService(2048, 4096);
+  // 2.600 esta por encima del ejemplo sin relleno (2.344) y por debajo del
+  // techo: comprueba que el limite inferior se aplica de verdad, no que este
+  // apagado. No se usa 2.048 porque el documento de 70 atributos ya lo supera
+  // solo con su contenido, y el test pasaria sin probar nada.
+  const estricto = new MapperService(2600, 4096);
   const doc = clon();
   doc['padding'] = '';
   assert.throws(
@@ -303,7 +308,7 @@ test('el minimo se dispara cuando de verdad se aprieta', () => {
     (e: unknown) =>
       e instanceof DocumentoInvalido &&
       e.motivo === 'peso_fuera_de_rango' &&
-      e.message.includes('1588'),
+      e.message.includes('2344'),
   );
 });
 

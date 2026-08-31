@@ -196,20 +196,20 @@ export class SaludDto {
 
   @ApiProperty({
     example: { 'C-02': 'mapper', 'C-03': 'firma', 'C-04': 'cifrado', 'C-05': 'outbox', 'C-06': 'relay' },
-    description: 'Que hay hecho y que no. Un health que dice `ok` sin mas invita a creer que el camino esta completo.',
+    description: 'Los tramos del pipeline que este contenedor ejecuta, en orden. Estan los cinco: el camino de un documento llega hasta la cola de C4.',
   })
   tareas!: Record<string, string>;
 
   @ApiProperty({
     example: true,
-    description: 'Desde C-06 el relay publica de verdad en la cola FIFO de C4.',
+    description: 'Siempre `true`: el relay publica de verdad en la cola FIFO de C4 (C-06). Existe porque hubo un tiempo en que C3 firmaba y cifraba sin entregar nada, y el health no lo decia.',
   })
   publica_a_sqs!: boolean;
 
   @ApiProperty({
     example: { total: 128, pendientes: 128, enviados: 0, fallidos: 0, payload_hash_unicos: 128, expedientes: 12 },
     nullable: true,
-    description: 'Conteos del outbox. `pendientes` creciendo sin que `enviados` suba es exactamente lo que se espera hasta C-06. Null si la base no contesta.',
+    description: '⚠ Conteos del outbox. `pendientes` creciendo sin que `enviados` suba significa que el relay NO esta drenando — mirar `relay.pausado_ms` (circuit breaker) y `relay.ocupado`. Null si la base no contesta.',
   })
   outbox!: Record<string, number> | null;
 
@@ -231,16 +231,33 @@ export class PruebaResumenDto {
   @ApiProperty({ example: 'abc16' })
   prueba!: string;
 
-  @ApiProperty({ example: 152, description: 'Requests HTTP, es decir lotes.' })
+  @ApiProperty({ example: 152, description: 'Peticiones HTTP que LLEGARON, es decir lotes.' })
   peticiones!: number;
+
+  @ApiProperty({
+    example: 151,
+    description:
+      'Peticiones que se contestaron con 202. Menos que `peticiones` significa que ' +
+      'hay lotes en vuelo — o que fallaron, y entonces estan en `fallidas`.',
+  })
+  completadas!: number;
+
+  @ApiProperty({ example: 0, description: 'Reventaron: no hubo 202. No cuentan como completadas.' })
+  fallidas!: number;
 
   @ApiProperty({ example: 3040, description: 'Documentos. Es este el numero que se resta contra el `sent` del orquestador.' })
   eventos!: number;
 
+  @ApiProperty({ example: 3040, description: 'Documentos que pasaron el mapper y quedaron en el outbox.' })
+  aceptados!: number;
+
+  @ApiProperty({ example: 0, description: 'Documentos rechazados por el contrato. El motivo va en la respuesta del 202.' })
+  descartados!: number;
+
   @ApiProperty({ example: 7012480, description: 'Bytes de los documentos, descontado el envoltorio del lote.' })
   bytes!: number;
 
-  @ApiProperty({ example: 2306.7, nullable: true })
+  @ApiProperty({ example: 2306, nullable: true })
   bytes_medios_por_evento!: number | null;
 
   @ApiProperty({ example: 3040 })
@@ -249,22 +266,45 @@ export class PruebaResumenDto {
   @ApiProperty({
     example: 0,
     description:
-      'Se comparan contra TODA la prueba, no solo contra el minuto en curso: un ' +
-      'duplicado que cruza la frontera del minuto sigue siendo un duplicado, y es ' +
-      'exactamente el fallo que SQS FIFO se tragaria en silencio.',
+      'Se comparan contra TODA la prueba, no solo contra el segundo en curso: un ' +
+      'duplicado que cruza la frontera del segundo sigue siendo un duplicado, y es ' +
+      'exactamente el fallo que SQS FIFO se tragaria en silencio (regla 11).',
   })
   event_ids_duplicados!: number;
 
-  @ApiProperty({ example: 3, description: 'Ventanas de un minuto ya cerradas. Los totales de arriba son la suma de estas.' })
-  ventanas!: number;
+  @ApiProperty({ example: 42, description: 'Segundos con actividad grabados para esta prueba.' })
+  segundos!: number;
 
   @ApiProperty({
-    example: true,
+    example: 8.4,
+    nullable: true,
     description:
-      'Hay un minuto en curso cuyos numeros TODAVIA NO estan contados arriba. Con ' +
-      'true, este resumen va por detras de lo que ya llego.',
+      'Latencia de la peticion COMPLETA, retardo artificial incluido. Aproximado: ' +
+      'sale de ponderar los percentiles de cada segundo. El exacto por segundo esta ' +
+      'en el archivo.',
   })
-  minuto_abierto!: boolean;
+  latency_p50_ms!: number | null;
+
+  @ApiProperty({ example: 31.2, nullable: true })
+  latency_p99_ms!: number | null;
+
+  @ApiProperty({
+    example: { canonical: 0.062, sign: 0.089, encrypt: 0.041, outbox: 3.71, pipeline: 4.02, delay: 300, wait: 218, sqs: 12.4 },
+    description:
+      'p50 en ms de cada tramo. `canonical`/`sign`/`encrypt` son POR DOCUMENTO; ' +
+      '`outbox`, `pipeline` y `delay`, por peticion; `wait` (e4→e5, lo que la fila ' +
+      'espero en el outbox) por fila, y `sqs` (e5→e6) por LLAMADA a SendMessageBatch, ' +
+      'que lleva hasta 10 sobres. Un tramo que no ocurrio no aparece.\n\n' +
+      '`delay` es el retardo artificial de `C3_DELAY_MS`: sale como tramo propio para ' +
+      'que una perilla de prueba no se lea como coste del sistema.',
+  })
+  pasos!: Record<string, number | null>;
+
+  @ApiProperty({
+    example: false,
+    description: 'La prueba lleva mas de 8 s callada y su archivo ya se cerro.',
+  })
+  cerrada!: boolean;
 
   @ApiProperty({ example: '/app/logs/abc16__tenant-01.json' })
   archivo!: string;

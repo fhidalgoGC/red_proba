@@ -277,8 +277,8 @@ export class InboxRepository {
    *   faltan el 9 y el 10  →  no: MAX pasa a 8 y 1..8 es denso
    *   falta el expediente  →  no: no hay ni fila que agrupar
    *
-   * Y el fallo mas probable de esta PoC -una tarea de Fargate que muere con su
-   * outbox efimero dentro- se lleva justo la cola. Desde C4 ese caso es
+   * Y el fallo mas probable de esta PoC -un relay que se detiene con filas
+   * todavia pendientes en su outbox- se lleva justo la cola. Desde C4 ese caso es
    * indistinguible de un expediente que termino ahi.
    *
    * Por eso este metodo no decide nada: vuelca lo que hay para que el

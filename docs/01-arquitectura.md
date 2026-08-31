@@ -3,22 +3,19 @@
 ## Topología
 
 ```
-┌─ VPC ORQ ────────────┐
-│  ECS Fargate         │
-│  Load Driver         │
-└──────────┬───────────┘
-           │ VPC peering (solo prueba)
-           ▼
-┌─ VPC C3 · cuenta c3-dev · PARTICIPANTE ──────────────┐
-│                                                       │
-│  sg-tenant-01 [ API NestJS ] ←→ [ Postgres ]          │
-│  sg-tenant-02 [ API NestJS ] ←→ [ Postgres ]          │
-│  …47 más                                              │
-│  sg-tenant-50 [ API NestJS ] ←→ [ Postgres ]          │
-│                                                       │
-│  VPC Endpoints: ECR · KMS · Secrets · Logs · SQS      │
-│  sin NAT · sin salida a internet                      │
-└──────────────────────┬────────────────────────────────┘
+┌─ VPC C3 · cuenta c3-dev · PARTICIPANTE ──────────────────┐
+│                                                           │
+│  sg-orq  [ Load Driver ]  ← andamio, no es un dominio     │
+│              │ HTTP :8080 · api-NN.poc.local              │
+│              ▼                                            │
+│  sg-tenant-01 [ API NestJS ] ←→ [ RDS Postgres ]          │
+│  sg-tenant-02 [ API NestJS ] ←→ [ RDS Postgres ]          │
+│  …47 más                                                  │
+│  sg-tenant-50 [ API NestJS ] ←→ [ RDS Postgres ]          │
+│                                                           │
+│  VPC Endpoints: ECR · KMS · Secrets · Logs · SQS          │
+│  sin NAT · sin salida a internet                          │
+└──────────────────────┬────────────────────────────────────┘
                        │ evento firmado y cifrado
                        ▼
                  ┌───────────┐
@@ -26,22 +23,31 @@
                  └─────┬─────┘
                        ▼
 ┌─ VPC C4 · cuenta c4-dev · OPERADOR NEUTRO ───────────┐
-│  sg-c4-servicios                                      │
-│    Ingest API · Conformance Gate                      │
-│    Verify API · Case Header · Shared Map Projector    │
-│  Postgres — 5 schemas                                 │
+│  sg-c4                                                │
+│    Consumidor · descifra · verifica · persiste        │
+│  RDS Postgres — el inbox                              │
 └───────────────────────────────────────────────────────┘
 
-  ✗ NO hay peering ni Transit Gateway entre C3 y C4
-  ✗ El orquestador NO se conecta a C4
+  ✗ NO hay peering, ni Transit Gateway, ni PrivateLink en toda la PoC
+  ✗ El orquestador NO se conecta a C4 — ni por red ni por IAM
 ```
+
+**Dos VPC, no tres.** El orquestador corre dentro de la de C3, en su propio
+security group. Es andamio de prueba, no un dominio de confianza: darle VPC
+propia obligaba a un peering, y un peering es exactamente el tipo de ruta que
+alguien podría replicar después hacia C4. Sin VPC de ORQ no hay ni una sola
+conexión entre VPC en toda la infraestructura.
 
 ## Decisiones
 
 ### D-01 · Una VPC por dominio de confianza, no por tenant
 
-Dos VPC porque hay dos dueños con intereses distintos. 50 VPC no darían más
-seguridad y multiplicarían endpoints, rutas y CIDR por 50.
+Dos VPC porque hay dos dueños con intereses distintos: C3 y C4. 50 VPC no
+darían más seguridad y multiplicarían endpoints, rutas y CIDR por 50.
+
+El orquestador **no suma una tercera**: no es un dueño, es el arnés de carga.
+Vive en la VPC de C3 separado por security group, igual que un tenant se separa
+de otro.
 
 El SaaS multi-tenant real no hace VPC por cliente: no escala más allá de unas
 decenas. Cuando se necesita aislamiento más fuerte se salta a **cuenta por
@@ -83,8 +89,8 @@ visible: simplemente el tenant 08 puede leer la base del 07. La única forma de
 detectarlo es la verificación explícita:
 
 ```bash
-# desde la tarea del tenant 08, contra el host del 07
-psql -h db-07.poc.local -U app -c 'select 1'
+# desde la tarea del tenant 08, contra el endpoint RDS del 07
+psql -h rpf-db-07.xxxx.rds.amazonaws.com -U app -c 'select 1'
 # DEBE dar timeout. Si da "password authentication failed",
 # la conexión TCP se estableció y el aislamiento NO existe.
 ```
@@ -177,19 +183,31 @@ payload está pseudonimizado con HMAC.
 **Bonus** — el `payload_hash` explícito es además la llave que une el outbox de C3
 con el inbox de C4 para medir extremo a extremo. Ver [07-medicion](07-medicion.md).
 
-### ORQ-06 · VPC peering hacia C3 (no PrivateLink)
+### ORQ-06 · El orquestador vive dentro de la VPC de C3
 
-Se descartó PrivateLink: obligaría a montar un NLB delante de los 50 API, y el
-peering no tiene cargo por hora. Asociando la zona privada de Cloud Map a la
-VPC del orquestador, este resuelve `api-NN.poc.local` directamente.
+Se descartaron las dos alternativas que suponen VPC propia. PrivateLink
+obligaría a montar un NLB delante de los 50 API. El peering no cuesta por hora,
+pero deja una conexión entre VPC en el inventario — y el argumento de D-03 es
+justamente que **no hay ninguna**. Un revisor que encuentra un peering ORQ↔C3
+tiene que aceptar el razonamiento de "no es transitivo" en vez de mirar el
+diagrama y ver que no hay nada que aflojar.
 
-**Lo que se pierde** — PrivateLink es unidireccional por construcción; el peering
-es bidireccional. En la práctica el comportamiento es el mismo porque los
-security groups son stateful: sin reglas de entrada en el SG del orquestador,
-las respuestas fluyen igual y C3 no puede iniciar nada hacia él.
+Con el driver en la VPC de C3 no hace falta nada: resuelve `api-NN.poc.local`
+por la zona de Cloud Map, que ya está ahí, y llega al API por IP privada.
 
-**Requisito** — los CIDR de las tres VPC ya no pueden traslaparse. El peering
-falla al crearse si chocan.
+**Lo que separa a ORQ de los tenants** es lo mismo que separa a un tenant de
+otro: el security group. `sg-orq` no aparece en el ingress de 5432 de ningún
+tenant, así que no alcanza ninguna base. Su egress es 8080 hacia el CIDR de C3
+y 443 hacia los endpoints.
 
-**No rompe D-03** — el peering no es transitivo: conectar el orquestador a C3 no
-le da a C3 ningún camino hacia C4.
+**Sigue sin poder recibir** — `sg-orq` no tiene reglas de entrada. Los security
+groups son stateful: las respuestas de C3 fluyen igual y C3 no puede iniciar
+nada hacia él. Es la unidireccionalidad que daba PrivateLink, sin NLB.
+
+**No toca D-03** — el orquestador está del lado de C3, y del lado de C3 a C4 no
+hay ruta. Además su task role no tiene `sqs` ni `kms`, y la resource policy de
+la cola solo nombra a los roles de C3 y C4: aunque alcance el endpoint de SQS de
+C3 por red, no puede escribir ni leer nada.
+
+**Requisito** — los CIDR de C3 y C4 no se tocan, pero ya no por el peering: es
+higiene, no un requisito técnico.

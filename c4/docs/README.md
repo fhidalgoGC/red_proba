@@ -37,19 +37,61 @@ implementación.
 ```bash
 npm ci && npm run build
 
-AWS_REGION=us-west-2 \
-SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<cuenta>/rpf-one-eventos.fifo \
-SQS_DLQ_URL=https://sqs.<region>.amazonaws.com/<cuenta>/rpf-one-eventos-dlq.fifo \
-DATABASE_URL=postgres://usuario:clave@host:5432/c4 \
-KMS_ENCRYPT_KEY_ID=arn:aws:kms:...:key/... \
-C4_LLAVES_FIRMA=arn:aws:kms:...:key/... \
-node dist/main.js
+npm start        # lee c4/.env con `node --env-file=.env`
 ```
 
-**No expone endpoints.** La cola es su única entrada; el Postgres y los logs,
-su única salida. No es un API: es un worker, y por eso arranca con
-`createApplicationContext` y no con un servidor HTTP — igual que dice la task
-definition de `terraform/modules/c4`, sin `portMappings` y sin balanceador.
+Toda la configuración vive en **`c4/.env`** (plantilla en `.env.ejemplo`), que
+carga Node de forma nativa — sin `dotenv`. Lo que la línea de comandos ponga
+gana sobre el archivo, así que se puede pisar cualquier variable sin editarlo:
+
+```bash
+C4_SALIR_TRAS_VACIOS=2 npm start     # termina solo al vaciarse la cola
+```
+
+### ⚠ Base propia, separada de las de C3
+
+```
+rpf_c4              ← C4
+rpf_c3_tenant01     ← C3 tenant-01
+rpf_c3_tenant02     ← C3 tenant-02
+```
+
+No es una preferencia de orden. **C3 y C4 son dominios sin ruta de red entre
+ellos** (D-03) y el único canal es la cola. Si compartieran base, una
+conciliación con `JOIN c3.outbox … c4.inbox` funcionaría en local y sería
+**imposible en producción** — la peor clase de prueba: la que da verde por una
+razón que no existe fuera del portátil.
+
+Conciliar outbox contra inbox se hace **exportando de cada base por separado y
+cruzando fuera**, que es lo único que se podrá hacer en AWS:
+
+```bash
+psql -d rpf_c3_tenant01 -tAc "SELECT payload_hash FROM c3.outbox WHERE status='SENT'" > t01.txt
+psql -d rpf_c4          -tAc "SELECT payload_hash FROM c4.inbox"                      > c4.txt
+# se comparan como conjuntos, fuera de las bases
+```
+
+**Sigue sin ser un API.** La cola es su única entrada y el Postgres su única
+salida; lo único que sirve por HTTP es su propia salud (`G-09`):
+
+```bash
+curl localhost:3003/health    # ok, base, cola, estado del consumidor
+curl localhost:3003/status    # solo contadores, no toca la base
+open  http://localhost:3003/docs   # Swagger
+```
+
+Ese endpoint existe porque **un proceso vivo no dice nada**: C4 puede estar
+corriendo con el Postgres caído y seguir sacando mensajes de la cola — los
+borraría sin persistir y P4 daría de menos, sin un solo error visible desde
+fuera. Por eso `ok` refleja **la base**, no el proceso, igual que en C3 (C-08).
+
+Documentado en Swagger, como C3 y el orquestador: **`http://localhost:3003/docs`**.
+
+Escucha en `127.0.0.1`, así que la task definition de `terraform/modules/c4`
+sigue **sin `portMappings` y sin balanceador** — el único que lo consulta es el
+`healthCheck` de la propia task, desde dentro del contenedor. Y con
+`C4_PORT=0` arranca como contexto puro, sin abrir nada: exactamente como corría
+antes de `G-09`.
 
 ---
 
@@ -64,6 +106,7 @@ definition de `terraform/modules/c4`, sin `portMappings` y sin balanceador.
 | `G-05` Detección de huecos | ✅ |
 | `G-06` Marcas de tiempo `e7..e10` | ✅ (+ `e7b`) |
 | `G-07` Manejo de DLQ | ✅ |
+| `G-09` Endpoint de salud (`/health`, `/status`) | ✅ |
 
 ---
 

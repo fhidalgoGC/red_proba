@@ -13,6 +13,7 @@ terraform.tfstate
 terraform.tfstate.*
 crash.log
 estado.auto.tfvars
+clientes.auto.tfvars
 
 # Secretos y entorno
 .env

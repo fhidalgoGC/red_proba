@@ -16,7 +16,12 @@ import { test } from 'node:test';
 import { validarPerfil } from '../src/config/config.service';
 
 /** Un perfil de carga minimo, con los rangos que se quieran probar. */
-function perfil(peticiones: [number, number] | null, eventos: [number, number] | null, porRequest = 1) {
+function perfil(
+  peticiones: [number, number] | null,
+  eventos: [number, number] | null,
+  porRequest = 1,
+  tamanoBytes: [number, number] = [2048, 4096],
+) {
   return validarPerfil(
     {
       modo: 'carga',
@@ -27,7 +32,7 @@ function perfil(peticiones: [number, number] | null, eventos: [number, number] |
       pool: {
         plantillas: 4,
         semilla: 7,
-        tamano_bytes: [1536, 3072],
+        tamano_bytes: tamanoBytes,
         items_por_documento: [1, 2],
         eventos_por_hilo: 1,
         tasa_verificacion: 0,
@@ -86,4 +91,32 @@ test('eventos/s = peticiones/s x documentos por peticion', () => {
   const reqMedia = (p.peticiones.porCliente!.min + p.peticiones.porCliente!.max) / 2;
   const evMedia = (p.eventos.porPeticion!.min + p.eventos.porPeticion!.max) / 2;
   assert.equal(reqMedia * evMedia, 150 * 5.5);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Los limites de tamaño del pool
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('el piso rechaza un rango por debajo del documento fiscal', () => {
+  assert.throws(
+    () => perfil([10, 20], [1, 5], 1, [1536, 4096]),
+    /no baja de 2024 bytes canonicos/,
+  );
+});
+
+test('el techo BLOQUEA por encima de 4096: es el limite de kms:Sign RAW', () => {
+  // Antes esto era un warn — sobraban 1.024 bytes hasta el limite de KMS y
+  // pasarse solo hacia los numeros incomparables. Con el techo en 4.096 no
+  // sobra nada: si esto no lanza, la corrida arranca, genera las 1.000
+  // plantillas, y muere en C3 con un error de KMS que no menciona esta config.
+  assert.throws(
+    () => perfil([10, 20], [1, 5], 1, [2048, 4097]),
+    /limite DURO de kms:Sign con MessageType RAW/,
+  );
+});
+
+test('2 KB exactos siguen siendo pedibles', () => {
+  // Es el defecto de perfil.yaml. Si el piso subiera por encima, el perfil que
+  // se entrega en el repo dejaria de arrancar.
+  assert.doesNotThrow(() => perfil([10, 20], [1, 5], 1, [2048, 4096]));
 });

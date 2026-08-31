@@ -61,7 +61,7 @@ eventos:
 pool:
   plantillas: 1000
   semilla: 20260830
-  tamano_bytes: [1536, 3072]
+  tamano_bytes: [2048, 4096]
   items_por_documento: [1, 5]
   eventos_por_hilo: 1
   tasa_verificacion: 0.01
@@ -69,8 +69,8 @@ pool:
 envio:
   ruta: /events
   prueba_id: corrida-local
-  eventos_por_request: 1
-  espera_maxima_lote_ms: 200
+  eventos_por_request: 1        # tamaño FIJO; el atajo de eventos.client: [N, N]
+  espera_maxima_lote_ms: 200    # ⚠ OBSOLETA: ya no hay buffer que esperar
   concurrencia_por_tenant: 0     # 0 = SIN TOPE
   timeout_ms: 5000
   conexiones_por_destino: 256
@@ -87,7 +87,7 @@ eso es peor que no arrancar.
 |---|---|
 | `llegadas.tick_ms` | Resolución del reloj. Más fino = más puntería, más CPU. A 10 ms el coste medido es 0,23 µs por tick |
 | `pool.eventos_por_hilo` | Cuántos eventos comparten `rpf_id` = `MessageGroupId`. Con 1, paralelismo máximo; con 50, orden estricto y te acercas al techo de 300 msg/s. **Es la perilla que ejercita D-06** |
-| `pool.tamano_bytes` | Rango del tamaño canónico. **Piso duro 1.411** — ver [01-como-funciona](01-como-funciona.md) |
+| `pool.tamano_bytes` | Rango del tamaño canónico. **Piso duro 2.032, techo 4.096** — ver [01-como-funciona](01-como-funciona.md) |
 | `pool.tasa_verificacion` | Fracción de eventos a los que se comprueba el tamaño. 1.0 es correcto pero caro; 0 solo verifica al construir el pool |
 | `envio.eventos_por_request` | Tamaño **fijo** del lote. Es el atajo de `eventos.client: [N, N]`; si pones `eventos.client`, este se ignora |
 | `envio.conexiones_por_destino` | **Techo duro de ritmo**: `conexiones / latencia` req/s |

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # APAGAR — corta el computo sin destruir. T-07.
 #
-# Conserva red, llaves, colas y DATOS. Tambien libera los interface
-# endpoints, que son el costo fijo real (~$0,15/h con 1 AZ).
+# Conserva red, llaves y colas. Tambien libera los interface endpoints,
+# que son el costo fijo real (~$0,12/h con 1 AZ).
+#
+# ⚠ Los DATOS no sobreviven salvo rds_persistente=true: RDS no escala a
+#   cero, asi que sigue la misma perilla y apagar destruye las instancias.
 # Entre corridas se apaga, no se destruye.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_comun.sh"

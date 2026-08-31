@@ -23,10 +23,24 @@ logs/<prueba>.json
         └── seconds[]  ← LO MEDIDO
 ```
 
-**Los tres niveles están encadenados**: `seconds` es lo medido, `minutes` suma
-sus segundos, `total` suma sus minutos. Si cada nivel se contara por su cuenta
-podrían discrepar y no habría manera de saber cuál miente. Un descuadre acusa a
-la agregación, nunca a la medición.
+**Los niveles están encadenados**: `seconds` es lo medido, `minutes` suma sus
+segundos, `hours` suma sus minutos, `total` suma el nivel más alto que exista.
+Si cada nivel se contara por su cuenta podrían discrepar y no habría manera de
+saber cuál miente. Un descuadre acusa a la agregación, nunca a la medición.
+
+### Las ventanas grandes solo aparecen si hay algo que agrupar
+
+```
+seconds   siempre
+minutes   solo con más de 60 segundos
+hours     solo con más de 60 minutos
+```
+
+`minutes` en una corrida de 20 s sería un array de un elemento idéntico al
+total, y `hours` en una de cinco minutos, lo mismo: ruido que hay que leer
+entero para descubrir que no dice nada. El orden en el JSON es
+**`total · seconds · minutes · hours`** — primero lo que se mira, y debajo el
+detalle por si hace falta.
 
 ---
 
@@ -36,58 +50,87 @@ la agregación, nunca a la medición.
 {
   "seg": 4,                                  // 1-based desde el arranque
   "at": "2026-08-30T22:22:18.000Z",
-  "target_per_s": 122,                       // la cuota que se sorteó
   "metrics": {
-    "sent": {                                // el lado del ENVÍO — lo pone el reloj
-      "count": 122,
-      "weight": "270.7 KB",
-      "dropped_lag": 0,                      // se pidió y no salió → culpa del arnés
-      "dropped_saturation": 0                // el tope en vuelo estaba lleno
-    },
-    "completed": {                           // el lado de la RESPUESTA — lo pone C3
-      "count": 113,
-      "weight": "252.5 KB",
-      "ok": 113,                             // 2xx
+    "request": {                             // NIVEL PETICIÓN HTTP
+      "target_per_s": 33,                    // peticiones/s que se sortearon
+      "sent": 33,                            // salieron al cable
+      "completed": 45,                       // el destino respondió
+      "ok": 45,                              // 2xx
       "not_ok": 0,                           // 429, 503, 400…
       "failed": 0,                           // salió y NO volvió: timeout o red
-      "latency_p50_ms": 890,
-      "latency_p99_ms": 1459.4,
-      "latency_max_ms": 1503,
-      "latency_avg_ms": 858.7,
-      "samples": 113                         // = completed.count
+      "dropped_lag": 0,                      // se pidió y no salió → culpa del arnés
+      "dropped_saturation": 0,               // el tope en vuelo estaba lleno
+      "latency_p50_ms": 548.1,
+      "latency_p99_ms": 1304,
+      "latency_max_ms": 1304,
+      "latency_avg_ms": 573.3,
+      "samples": 45                          // muestras de latencia, una por respuesta
+    },
+    "events": {                              // NIVEL DOCUMENTO
+      "sent": 114,
+      "weight": "257.9 KB",
+      "completed": 147,
+      "weight_completed": "323.8 KB",
+      "ok": 147,
+      "not_ok": 0,
+      "failed": 0,
+      "dropped_lag": 0,
+      "dropped_saturation": 0,
+      "per_request": 3.45                    // media de documentos por petición
     }
   }
 }
 ```
 
-Misma forma en `minutes[]`, en `total` y en `resumen`.
+## Por qué dos niveles y no uno
 
-### Por qué agrupado por etapa
+`request.client` fija **peticiones/s**; `events.client`, **cuántos documentos
+lleva cada una**. Son cosas distintas y mezclarlas hacía que el informe
+contestara la pregunta equivocada:
 
-Plano, los doce campos obligaban a recordar cuál pertenece a qué momento: `ok`
-es del lado de la respuesta, `dropped_lag` del lado del envío, y los dos pesos
-se leían como dos datos sueltos en vez de como el mismo dato en dos instantes
-distintos.
+```jsonc
+// ANTES — dos unidades en el mismo objeto, sin decirlo
+"target_per_s": 37,          // PETICIONES
+"sent": { "count": 110 }     // EVENTOS
+```
 
-Agrupado, la pregunta **«¿esto lo mide el reloj o lo mide el destino?»** se
-contesta mirando en qué bloque cayó.
+37 al lado de 110 parecía un exceso del 197%. No lo era: eran dos cosas
+medidas en unidades distintas.
 
-`failed` va en `completed` aunque no sea un completado: salió al cable y su
-desenlace fue «no hubo respuesta». Ponerlo en `sent` lo confundiría con los
-descartes, que ni llegaron a salir.
+**El reparto no es arbitrario.** La latencia y los códigos HTTP viven en
+`request` porque **una respuesta es una petición**, lleve un documento o veinte
+— medir latencia «por evento» no significa nada. Los bytes viven en `events`
+porque el peso es de los documentos, no del sobre HTTP.
+
+Sin los dos niveles no se puede decir si el destino se satura **por petición**
+(concurrencia HTTP) o **por evento** (la firma de KMS). Son cuellos distintos y
+se arreglan de forma distinta.
+
+### En el `total` faltan dos campos, a propósito
+
+`target_per_s` no aparece: cada segundo tuvo el suyo, sorteado dentro del
+rango, y promediarlos daría un número que ningún segundo persiguió. `samples`
+tampoco: en el total siempre coincide con `completed`, y repetir el mismo
+número con otro nombre invita a creer que son cosas distintas.
+
+En las ventanas sí están, y `samples` ahí sí informa: si es **menor** que
+`completed`, se alcanzó el techo de muestras por segundo y los percentiles
+salen de una muestra, no de todo.
 
 ---
 
-## `target_per_s` contra `sent.count`
+## `target_per_s` contra `request.sent`
 
-Es la comparación que dice si la aleatoriedad hizo lo que prometía.
+Es la comparación que dice si la aleatoriedad hizo lo que prometía — y ahora
+los dos números están en la **misma unidad**, que es todo el punto de haberlos
+separado de los eventos.
 
 ```
  seg  target  sent  completed
-   1     142   142         33
-   2     188   188        170
-   3     123   123        195
-   4     144   144        192
+   1      19    19          6
+   2      33    33         45
+   3      12    12         28
+   4       7     7          6
 ```
 
 - **`target == sent`** — el arnés cumplió su cuota.
@@ -199,7 +242,7 @@ destino empieza a ahogarse.
 
 ```bash
 cat orquestador/logs/xx01.json | jq '.resumen.sent.count, .resumen.completed.count'
-cat c3/logs/xx01__tenant-01.json | jq '.totales'
+cat c3/logs/xx01__tenant-01.json | jq '.total.request, .total.events'
 ```
 
 C3 mide el peso del **cuerpo crudo** que llegó por el cable, descontando el

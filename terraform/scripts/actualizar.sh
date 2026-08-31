@@ -34,8 +34,8 @@ echo; echo "  $RESUMEN"
 if echo "$RESUMEN" | grep -qE '[1-9][0-9]* to destroy'; then
   echo
   rojo "⚠ ESTE PLAN DESTRUYE RECURSOS."
-  ambar "  El Postgres corre en Fargate con almacenamiento efimero:"
-  ambar "  si se reemplaza su tarea, su outbox se pierde y en la demo"
+  ambar "  Las instancias RDS van con skip_final_snapshot: si una se"
+  ambar "  destruye o se reemplaza, su outbox se pierde y en la demo"
   ambar "  se ve como perdida de eventos aunque el patron este bien."
   echo
   $TF show -no-color .plan.tfplan | grep -E 'will be destroyed|must be replaced' | sed 's/^/    /'

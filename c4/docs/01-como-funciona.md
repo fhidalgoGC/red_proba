@@ -44,7 +44,7 @@ e7b   le toca a ESTE mensaje
  │     e9  verificado                falla ─→ DLQ + alarma  (firma_invalida)
  │                                   llave ─→ DLQ + alarma  (llave_no_aceptada)
  ├─ 4. ¿grupo == rpf_id firmado?     no ──→ DLQ + alarma   (rpf_id_no_coincide)
- ├─ 5. ¿dedup declarado == recalculado?  no ─→ DLQ + alarma (dedup_no_coincide)
+ ├─ 5. ¿payload_hash declarado == recalculado?  no ─→ DLQ + alarma (payload_hash_no_coincide)
  ├─ 6. ¿rpf_id es un UUID?           no ──→ DLQ + alarma   (rpf_id_invalido)
  │
  └─ 7. [ TRANSACCIÓN: inbox + los cinco schemas ]

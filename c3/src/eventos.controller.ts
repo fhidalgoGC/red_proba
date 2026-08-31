@@ -9,7 +9,7 @@ import {
 } from './eventos.dto';
 import { PipelineService } from './pipeline/pipeline.service';
 import { RETARDO, dormir } from './retardo';
-import { RegistroService } from './registro.service';
+import { MetricasService, ahora, msDesde, normalizar } from './metricas/metricas.service';
 
 /**
  * C-01, primera mitad: el endpoint que recibe.
@@ -49,7 +49,7 @@ export class EventosController {
   private readonly logger = new Logger(EventosController.name);
 
   constructor(
-    private readonly registro: RegistroService,
+    private readonly metricas: MetricasService,
     private readonly pipeline: PipelineService,
   ) {}
 
@@ -139,7 +139,17 @@ export class EventosController {
     @Headers('x-prueba-id') prueba?: string,
     @Headers('x-lote-id') loteId?: string,
   ) {
+    // El primer instante que este proceso puede observar de la peticion. El
+    // cuerpo ya viene parseado por express, asi que el parseo NO entra: es
+    // deuda conocida de la medicion, no un olvido. Ver C-09 en 07-medicion.
+    const t0 = ahora();
     const docs = Array.isArray(lote?.documentos) ? lote.documentos : [];
+
+    // Se normaliza UNA VEZ, aqui en el borde: la misma clave viaja al pipeline,
+    // a la columna `prueba` del outbox y al nombre del archivo. Si cada capa
+    // normalizara por su cuenta, un id con forma rara acabaria en `sin-id` en
+    // el log y en el valor crudo en la base.
+    const corrida = normalizar(prueba);
 
     // El peso se toma del cuerpo CRUDO, no de re-serializar los documentos:
     // volver a pasarlos por JSON.stringify daria un numero parecido pero no
@@ -147,14 +157,43 @@ export class EventosController {
     const bytes = pesoDeLosDocumentos(req, docs);
 
     // Se anota ANTES de procesar: la llegada ocurrio ya. Anotarla despues
-    // moveria el evento al segundo equivocado y falsearia la conciliacion.
-    this.registro.anotar(prueba, docs, bytes);
+    // moveria el evento al segundo equivocado y falsearia la conciliacion —
+    // y el desfase entre `init` y `completed` es justo lo que se mide.
+    this.metricas.entrada(corrida, docs, bytes);
 
-    const { procesados, descartados } = await this.pipeline.procesar(docs);
+    let procesados;
+    let descartados;
+    try {
+      ({ procesados, descartados } = await this.pipeline.procesar(docs, corrida));
 
-    if (RETARDO) {
-      await dormir(RETARDO.min + Math.floor(Math.random() * (RETARDO.max - RETARDO.min + 1)));
+      if (RETARDO) {
+        // El retardo artificial sale como un paso mas y no escondido dentro
+        // de la latencia: sin el, una perilla de 300 ms aparece como un hueco
+        // entre `pipeline` y la latencia que alguien lee como coste del
+        // sistema. Es lo que cierra la aritmetica de la fila.
+        const tDelay = ahora();
+        this.metricas.abre(corrida, 'delay');
+        await dormir(RETARDO.min + Math.floor(Math.random() * (RETARDO.max - RETARDO.min + 1)));
+        this.metricas.cierra(corrida, 'delay', msDesde(tDelay));
+      }
+    } catch (e) {
+      // Sin 202 no hay `completed`. Contarlo como completado con su latencia
+      // meteria el tiempo hasta un fallo dentro del p99 de servicio, que es
+      // otra cosa: un fallo rapido bajaria el percentil y un timeout lo
+      // dispararia, las dos veces sin que el rendimiento haya cambiado.
+      //
+      // No hace falta arrastrar nada: cada tramo ya anoto su `init` al
+      // empezar. Un lote roto en la firma deja `sign.init` sin su `completed`
+      // y señala el tramo sin leer un solo log de texto.
+      this.metricas.fallida(corrida, msDesde(t0));
+      throw e;
     }
+
+    // La marca de completado se toma AQUI, no cuando el socket se vacia: es lo
+    // ultimo que este handler puede observar. La serializacion de la respuesta
+    // y el viaje de vuelta quedan fuera — el orquestador los tiene dentro de
+    // SU latencia, y la diferencia entre los dos numeros es exactamente la red.
+    this.metricas.completada(corrida, msDesde(t0), procesados.length, descartados.length);
 
     // `aceptados` y `descartados` van SEPARADOS del `recibidos`. El
     // orquestador cuenta lo que ofrecio; si C3 contestara solo "recibidos" y

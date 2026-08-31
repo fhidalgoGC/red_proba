@@ -40,7 +40,7 @@ $TF show -no-color .plan.tfplan | grep -E '^Plan:' || true
 if [ "$DC" = "0" ]; then
   verde "desired_count=0 · sin computo y sin interface endpoints. Estar creado cuesta ~\$0/dia."
 else
-  ambar "desired_count=1 · arranca computo Y crea 15 interface endpoints (~\$7,20/dia con 2 AZ)."
+  ambar "desired_count=1 · arranca computo Y crea 12 interface endpoints (~\$5,76/dia con 2 AZ)."
   ambar "Las imagenes tienen que existir en ECR o las tareas quedaran en bucle de arranque."
 fi
 

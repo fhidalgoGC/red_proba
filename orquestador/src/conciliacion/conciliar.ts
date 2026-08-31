@@ -13,8 +13,8 @@
  *   faltan el 9 y el 10   →  no lo ve   (MAX pasa a 8 y 1..8 es denso)
  *   falta el expediente   →  no lo ve   (no hay ni fila que agrupar)
  *
- * Y el fallo mas probable de esta PoC —una tarea de Fargate que muere con su
- * outbox efimero encima— se lleva justo la cola. El manifiesto trae el rango
+ * Y el fallo mas probable de esta PoC —un relay que se detiene con filas
+ * todavia pendientes en su outbox— se lleva justo la cola. El manifiesto trae el rango
  * emitido desde FUERA de C4, y con eso los tres puntos ciegos se cierran.
  *
  * ⚠ LA TRAMPA QUE ESTE ARCHIVO TIENE QUE EVITAR: no todo lo que falta es una

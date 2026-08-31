@@ -46,7 +46,7 @@ function evento(sobre: Partial<EventoAPersistir> = {}): EventoAPersistir {
     messageId: randomUUID(),
     recepciones: 1,
     bytesSobre: 4300,
-    bytesCanonicos: 3072,
+    bytesCanonicos: 4096,
     sqsEnviado: ahora,
     e7: ahora,
     e7b: ahora,

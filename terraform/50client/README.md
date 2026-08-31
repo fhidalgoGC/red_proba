@@ -28,8 +28,8 @@ Un error de índice en el `for_each` **no rompe nada visible**: simplemente el
 tenant 08 puede leer la base del 07. Solo lo detecta la prueba explícita.
 
 ```bash
-# desde la tarea del tenant 08, contra el host del 07
-psql -h db-07.poc.local -U app -c 'select 1'
+# desde la tarea del tenant 08, contra el endpoint RDS del 07
+psql -h rpf-db-07.xxxx.rds.amazonaws.com -U app -c 'select 1'
 # DEBE dar timeout.
 # Si da "password authentication failed", la conexión TCP se estableció
 # y el aislamiento NO existe.

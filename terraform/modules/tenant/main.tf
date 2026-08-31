@@ -22,7 +22,9 @@ resource "aws_cloudwatch_log_group" "api" {
 }
 
 
-# ── Cloud Map · api-NN.poc.local y db-NN.poc.local ───────────────────────
+# ── Cloud Map · api-NN.poc.local ─────────────────────────────────────────
+# Solo el API. La base no entra aca: RDS trae su propio endpoint DNS y es
+# el que va en DB_HOST.
 
 resource "aws_service_discovery_service" "api" {
   for_each = local.tenants

@@ -22,9 +22,17 @@ import { randomBytes } from 'node:crypto';
 import { bytesCanonicos } from './jcs';
 
 /**
- * Techo del tamaño canonico. Es el valor de docs/02-payload.md y sigue siendo
- * el maximo del rango, pero YA NO es el tamaño de todos los eventos: las
- * plantillas se generan con tamaños variados dentro de un rango configurable.
+ * Techo del tamaño canonico. Es el maximo del rango, no el tamaño de todos
+ * los eventos: las plantillas se generan con tamaños variados dentro de un
+ * rango configurable.
+ *
+ * ⚠ 4096 NO es un numero elegido por comodidad: es el limite DURO de
+ * `kms:Sign` con `MessageType: RAW`, que es lo que exige `ED25519_SHA_512`
+ * (ver c3/src/cripto/firmador.service.ts y terraform/modules/security/kms.tf).
+ * A 4096 bytes canonicos la firma entra justa, con margen CERO. Subir el techo
+ * un solo byte rompe la firma en C3 con un error de KMS, no del generador — y
+ * obligaria a pasar a `ED25519_PH_SHA_512` con digest, cambiando C3 y C4 a la
+ * vez porque los dos MessageType no son intercambiables.
  *
  * Por que variado: un flujo real de documentos fiscales no tiene todos el
  * mismo peso, y un tamaño unico esconde dos cosas — como se comporta la firma
@@ -33,23 +41,30 @@ import { bytesCanonicos } from './jcs';
  * misma; con tamaño variado se separan, y esa separacion es la que dice si el
  * cuello de botella es por operacion o por byte.
  */
-export const BYTES_MAXIMO = 3072;
+export const BYTES_MAXIMO = 4096;
 
 /**
  * Piso duro, MEDIDO, no estimado.
  *
- * El esqueleto del documento fiscal — los ~52 atributos hoja de
- * docs/02-payload.md, sin un solo item — pesa 1.270 bytes canonicos. Con el
- * item minimo (uno; un documento fiscal sin items no existe) son 1.433.
+ * Es el PEOR caso, no el caso medio: el esqueleto de 70 atributos hoja con un
+ * solo item pesa ~2.005 B con valores tipicos y 2.024 B cuando los importes,
+ * el numero de puerta y el nombre de calle caen todos en su largo maximo. La
+ * validacion tiene que usar el peor caso — si usara el medio, una plantilla
+ * desafortunada reventaria `ajustarATamano` a mitad del arranque del pool y el
+ * error saldria en la plantilla 700 de 1.000, no en la validacion de config.
  *
- * Subio 30 bytes cuando `party_id` paso a llevar el HMAC-SHA256 completo:
- * el valor crece 32 caracteres y el nombre del campo se acorta 2.
- * MEDIDO con `construirPlantilla`, no calculado a mano.
+ * MEDIDO sobre 1.000.000 de muestras y por el MISMO camino que usa el pool
+ * (rango [2048, 4096], items [1, 5]). El camino importa: forzar items [1, 1]
+ * consume otros sorteos del PRNG y deja sin explorar la cola de la
+ * distribucion — medirlo asi daba 2.041 y el rango real encontraba 2.043.
+ *
+ * Con la reserva de relleno el piso de `pool.tamano_bytes[0]` es 2.032 B, asi
+ * que 2 KB (2.048) entra con 16 bytes de margen.
  *
  * Es decir: pedir plantillas de 1 KB es imposible sin mutilar el documento, y
  * mutilarlo invalidaria la comparacion. El rango util empieza aqui.
  */
-export const BYTES_MINIMO_VIABLE = 1433;
+export const BYTES_MINIMO_VIABLE = 2024;
 
 /**
  * Relleno que se reserva SIEMPRE, aunque el evento ya llegue al target.
@@ -61,9 +76,14 @@ export const BYTES_MINIMO_VIABLE = 1433;
  */
 export const RESERVA_RELLENO = 8;
 
-/** Estimacion conservadora del costo de un item, para elegir cuantos entran. */
+/**
+ * Costo de un item y del esqueleto sin items, los dos en su PEOR caso medido
+ * (item: 164 B; esqueleto: 1.864 B con `items: []` y sin relleno). Se usan
+ * para decidir cuantos items caben en un target, y sobreestimar es lo correcto:
+ * un item de menos deja relleno de sobra, un item de mas rompe el ajuste.
+ */
 const BYTES_POR_ITEM = 170;
-const BYTES_SIN_ITEMS = 1270;
+const BYTES_SIN_ITEMS = 1864;
 
 /**
  * Alfabeto base64 para el relleno. Dos razones, ambas de aritmetica:
@@ -123,6 +143,32 @@ const digitos = (r: () => number, n: number): string => {
 };
 
 /**
+ * n caracteres base64 DETERMINISTAS, del PRNG con semilla.
+ *
+ * No usa `relleno()`: ese tira de randomBytes y vale solo para el padding,
+ * cuyo contenido no se firma. Esto sí acaba dentro de lo firmado (el digest de
+ * autorizacion), y la regla 9 de CLAUDE.md exige que sea reproducible.
+ */
+const b64det = (r: () => number, n: number): string => {
+  let s = '';
+  for (let i = 0; i < n; i++) s += B64[Math.floor(r() * 64)];
+  return s;
+};
+
+const LOGRADOUROS = ['Rua Ipiranga', 'Av Paulista', 'Rua Bandeirantes', 'Av Faria Lima'] as const;
+const BAIRROS = ['Centro', 'Moema', 'Butanta', 'Ipiranga'] as const;
+const CIDADES = ['Sao Paulo', 'Campinas', 'Santos', 'Osasco'] as const;
+
+/** Direccion postal: 5 atributos hoja, todos de valor corto. */
+const direccion = (r: () => number): Record<string, string> => ({
+  street: LOGRADOUROS[Math.floor(r() * LOGRADOUROS.length)]!,
+  number: String(100 + Math.floor(r() * 9800)),
+  district: BAIRROS[Math.floor(r() * BAIRROS.length)]!,
+  city: CIDADES[Math.floor(r() * CIDADES.length)]!,
+  zip: digitos(r, 8),
+});
+
+/**
  * Un documento fiscal. Se tipa flojo a proposito: la forma exacta la define
  * docs/02-payload.md y el consumidor real es C3, que lo trata como opaco.
  */
@@ -153,7 +199,8 @@ export interface Plantilla {
 
 /**
  * Construye UNA plantilla: todo el contenido caro (items, importes, CNPJs,
- * relleno) ya resuelto y ya ajustado a 3.072 bytes exactos.
+ * relleno) ya resuelto y ya ajustado al tamaño sorteado para ESTA plantilla,
+ * al byte.
  *
  * Los campos de identidad (rpf_id, event_id, sequence, occurred_at,
  * party_id) llevan valores canarios de LARGO CORRECTO. El pool los
@@ -209,6 +256,21 @@ export function construirPlantilla(
   const ufOrigem = 'SP';
   const ufDestino = UF[Math.floor(r() * UF.length)]!;
 
+  // Tributos del bloque `taxes`. Toda la aritmetica en centavos ENTEROS y el
+  // formateo al final: un `baseCent * 0.045` en float saldria como
+  // 1234.5600000000001 y el importe entraria al documento firmado con basura.
+  // El DIFAL es 0 en operacion interna — no se omite el campo, porque un
+  // atributo que aparece y desaparece cambia el numero de hojas y con el el
+  // tamaño canonico, y el pool asume forma estable.
+  const interna = ufOrigem === ufDestino;
+  const icmsStCent = Math.round(baseCent * 0.045);
+  const fcpCent = Math.round(baseCent * 0.02);
+  const difalOrigCent = interna ? 0 : Math.round(baseCent * 0.018);
+  const difalDestCent = interna ? 0 : Math.round(baseCent * 0.042);
+  const creditoIcmsCent = Math.round(productosCent * 0.07);
+  const issCent = Math.round(freteCent * 0.05);
+  const csllCent = Math.round(baseCent * 0.009);
+
   // Fecha canaria de largo fijo (24 caracteres, como todo toISOString()).
   // No se usa new Date() aqui: la plantilla tiene que ser reproducible a
   // partir de la semilla, y la fecha real se pone al enviar.
@@ -231,6 +293,7 @@ export function construirPlantilla(
       legal_name: 'Metalurgica Paulista Ltda',
       municipality_code: '3550308',
       uf: ufOrigem,
+      address: direccion(r),
     },
 
     counterparty: {
@@ -238,6 +301,7 @@ export function construirPlantilla(
       ie: digitos(r, 9),
       legal_name: 'Distribuidora Sul SA',
       uf: ufDestino,
+      address: direccion(r),
     },
 
     document: {
@@ -248,7 +312,7 @@ export function construirPlantilla(
       issued_at: fechaCanaria,
       operation: 'saida',
       cfop: ufOrigem === ufDestino ? '5102' : '6102',
-      nature: 'Venda de mercadoria de terceiros',
+      nature: 'Venda de mercadoria',
     },
 
     totals: {
@@ -283,6 +347,35 @@ export function construirPlantilla(
       system: 'erp-connector',
       version: '3.11.2',
       environment: 'poc',
+    },
+
+    // Tributos que no entran en `totals`: sustitucion tributaria, fondo de
+    // pobreza, DIFAL y las retenciones. Todos STRING (regla 1 de CLAUDE.md).
+    taxes: {
+      regime: 'lucro_real',
+      icms_st: brl(icmsStCent),
+      fcp: brl(fcpCent),
+      difal_origin: brl(difalOrigCent),
+      difal_dest: brl(difalDestCent),
+      icms_credit: brl(creditoIcmsCent),
+      iss: brl(issCent),
+      csll: brl(csllCent),
+    },
+
+    // Acuse de la SEFAZ. `authorized_at` lleva la fecha canaria de 24
+    // caracteres igual que occurred_at: es contenido de la plantilla, no una
+    // marca de medicion — esas viven en columnas del outbox (regla 8).
+    authorization: {
+      protocol: digitos(r, 15),
+      status: 'autorizado',
+      authorized_at: fechaCanaria,
+      digest: b64det(r, 12),
+      receipt: digitos(r, 15),
+    },
+
+    references: {
+      purchase_order: `PO-${digitos(r, 8)}`,
+      contract: `CT-${digitos(r, 6)}`,
     },
   };
 

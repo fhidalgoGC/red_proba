@@ -142,7 +142,7 @@ Para el tamaño del lote usa 'events' como objeto: { client: { min, max } }.
 | Campo | Por defecto | Qué hace |
 |---|---|---|
 | `seed` | del YAML | Semilla del PRNG. Misma semilla, mismas plantillas |
-| `size` | `[1536, 3072]` | Rango del tamaño canónico en bytes. Piso duro: 1.411 |
+| `size` | `[2048, 4096]` | Rango del tamaño canónico en bytes. Piso duro 2.032, techo 4.096 |
 | `items` | `[1, 5]` | Ítems por documento |
 | `pool` | 1000 | Plantillas pre-generadas |
 | `verify` | 0.01 | Fracción a la que se comprueba el tamaño canónico |
@@ -194,7 +194,7 @@ Todos llevan el motivo concreto, no un mensaje genérico.
 400  { "error": "client debe ser texto o numero, vino boolean (true)." }
 400  { "error": "request.client: max (20) es menor que min (80)" }
 400  { "error": "rate y request son excluyentes: …" }
-400  { "error": "pool.tamano_bytes[0] = 900, pero el documento fiscal no baja de 1433 bytes…" }
+400  { "error": "pool.tamano_bytes[0] = 900, pero el documento fiscal no baja de 2024 bytes…" }
 
 409  { "error": "el batch 'xx01' ya esta corriendo",
        "estado": "enviando", "consulta": "GET /batch/xx01" }

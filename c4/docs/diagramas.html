@@ -132,8 +132,8 @@
       documento—, abre el sobre en local, comprueba con una clave pública cacheada que
       la firma cubre exactamente lo que va a guardar, y escribe el inbox y los cinco
       schemas en una sola transacción. Lo que no abre o no verifica sale de la cola
-      <em>en el acto</em>. Siete diagramas de por qué cada una de esas decisiones no era
-      la obvia.
+      <em>en el acto</em>. Ocho diagramas de por qué cada una de esas decisiones no era
+      la obvia — empezando por la frontera con C3, que es de red <em>y</em> de datos.
     </p>
   </header>
 
@@ -220,6 +220,62 @@
         El único canal entre los dos dominios es la cola. La línea de abajo es la ruta que
         <em>no</em> existe: quitarla del dibujo la haría parecer una omisión, y es la
         decisión (D-03).
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y la frontera no es solo de red: también de datos.</b> Cada dominio
+      tiene <em>su propia base</em>, no un esquema dentro de la misma.
+      <pre style="margin-top:.6rem"><span class="c">rpf_c4              ← C4</span>
+<span class="c">rpf_c3_tenant01     ← C3 tenant-01</span>
+<span class="c">rpf_c3_tenant02     ← C3 tenant-02</span></pre>
+      No es una preferencia de orden. Con base compartida se puede escribir esto:
+      <pre style="margin-top:.6rem"><span class="k">FROM</span> c3.outbox o <span class="k">JOIN</span> c4.inbox i <span class="k">USING</span> (payload_hash)   <span class="c">← imposible en producción</span></pre>
+      Ese <code>JOIN</code> cruza dos dominios que no tienen ruta entre sí. La
+      prueba daría verde <strong>por una razón que no existe fuera del
+      portátil</strong>, y el día del despliegue la conciliación simplemente no
+      se podría hacer. Es la peor clase de falso positivo: el que solo se
+      descubre cuando ya no hay tiempo.
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 880 210" role="img" style="min-width:660px"
+             aria-label="Cada dominio tiene su propia base de datos; conciliar exige exportar de cada una y cruzar fuera">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <rect x="14" y="30" width="200" height="54" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="114" y="52" text-anchor="middle" fill="currentColor" font-size="10.5" font-weight="600">rpf_c3_tenant01</text>
+            <text x="114" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="10">c3.outbox · c3.expediente</text>
+
+            <rect x="14" y="96" width="200" height="54" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="114" y="118" text-anchor="middle" fill="currentColor" font-size="10.5" font-weight="600">rpf_c3_tenant02</text>
+            <text x="114" y="136" text-anchor="middle" fill="var(--ink-3)" font-size="10">c3.outbox · c3.expediente</text>
+
+            <rect x="666" y="63" width="200" height="54" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="766" y="85" text-anchor="middle" fill="currentColor" font-size="10.5" font-weight="600">rpf_c4</text>
+            <text x="766" y="103" text-anchor="middle" fill="var(--ink-3)" font-size="10">c4.inbox · journal · …</text>
+
+            <!-- el JOIN que no existe -->
+            <line x1="214" y1="90" x2="666" y2="90" stroke="var(--alarma)" stroke-width="1.6" stroke-dasharray="7 5"/>
+            <text x="440" y="82" text-anchor="middle" fill="var(--alarma)" font-size="10.5">JOIN — no existe</text>
+            <line x1="428" y1="76" x2="452" y2="104" stroke="var(--alarma)" stroke-width="2"/>
+            <line x1="452" y1="76" x2="428" y2="104" stroke="var(--alarma)" stroke-width="2"/>
+
+            <!-- la via correcta -->
+            <text x="14" y="180" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="11" font-weight="600">
+              La conciliación se hace exportando de cada base y cruzando FUERA:
+            </text>
+            <text x="14" y="200" fill="var(--ink-3)" font-size="10.5">
+              psql -d rpf_c3_tenant01 -tAc "SELECT payload_hash …" &gt; t01.txt   ·   psql -d rpf_c4 … &gt; c4.txt   ·   comparar como conjuntos
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Es exactamente lo que se podrá hacer en AWS, donde son dos RDS en
+        cuentas distintas. Verificado así: 2.089 + 2.180 = 4.269 en C3, 4.269 en
+        C4, cero perdidos.
       </figcaption>
     </figure>
   </section>
@@ -414,9 +470,9 @@
             <text x="509" y="206" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">rpf_id_no_coincide</text>
 
             <rect x="16" y="238" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
-            <text x="30" y="260" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">5 · ¿dedup declarado == recalculado?</text>
+            <text x="30" y="260" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">5 · ¿payload_hash declarado == recalculado?</text>
             <line x1="412" y1="255" x2="606" y2="255" stroke="var(--alarma)" stroke-width="1.3" marker-end="url(#f3-punta)" color="var(--alarma)"/>
-            <text x="509" y="248" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">dedup_no_coincide</text>
+            <text x="509" y="248" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--alarma)">payload_hash_no_coincide</text>
 
             <rect x="16" y="280" width="392" height="34" rx="3" fill="var(--claro-soft)" stroke="var(--claro)"/>
             <text x="30" y="302" font-family="var(--sans)" font-size="12.5" fill="var(--ink)">6 · ¿rpf_id es un UUID?</text>
@@ -885,7 +941,7 @@
           <tr><td>ciphertext alterado</td><td class="n">no_descifra</td><td>el tag de GCM</td></tr>
           <tr><td>descifra pero la firma no cubre el documento</td><td class="n">firma_invalida</td><td><strong>inyección con la llave de cifrado</strong></td></tr>
           <tr><td><code>key_id</code> fuera de la lista blanca</td><td class="n">llave_no_aceptada</td><td>firmado con otra llave</td></tr>
-          <tr><td><code>payload_hash</code> declarado ≠ recalculado</td><td class="n">dedup_no_coincide</td><td>idempotencia, o deriva del JCS</td></tr>
+          <tr><td><code>payload_hash</code> declarado ≠ recalculado</td><td class="n">payload_hash_no_coincide</td><td>idempotencia, o deriva del JCS</td></tr>
           <tr><td><code>rpf_id</code> que no es UUID</td><td class="n">rpf_id_invalido</td><td>reintento infinito por dato inválido</td></tr>
         </tbody>
       </table>

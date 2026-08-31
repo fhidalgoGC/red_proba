@@ -32,6 +32,17 @@ export interface Reclamado {
   envelope: Record<string, unknown>;
   /** Ya incrementado por el propio reclamo. */
   attempts: number;
+  /**
+   * La corrida que escribio la fila (`x-prueba-id`).
+   *
+   * El relay corre en su propio timer, fuera de cualquier request: sin esto no
+   * tendria de donde sacar a que prueba pertenece lo que publica, y los tramos
+   * `wait` y `sqs` caerian todos en `sin-id` mientras el resto del informe
+   * lleva el id de verdad.
+   */
+  prueba: string | null;
+  /** e4. Con e5 da lo que la fila espero en el outbox. */
+  e4: string | null;
   e5: string;
 }
 
@@ -76,7 +87,7 @@ export class OutboxRepository {
    * arreglaria nada y dejaria el lote a medias, que es peor de reconciliar
    * que un lote entero ausente.
    */
-  async escribir(procesados: Procesado[]): Promise<Escrito[]> {
+  async escribir(procesados: Procesado[], prueba?: string): Promise<Escrito[]> {
     if (procesados.length === 0) return [];
 
     try {
@@ -90,7 +101,7 @@ export class OutboxRepository {
         // 2 · el outbox, en la misma transaccion. Un solo INSERT con todas
         // las filas: N inserts serian N round trips a la base dentro del
         // candado.
-        return this.insertarOutbox(c, procesados);
+        return this.insertarOutbox(c, procesados, prueba ?? null);
       });
 
       this.contadores.transacciones += 1;
@@ -165,14 +176,22 @@ export class OutboxRepository {
    * comparten marca. No importa: se escriben en un solo INSERT, asi que su
    * instante real ES el mismo.
    */
-  private async insertarOutbox(c: PoolClient, procesados: Procesado[]): Promise<Escrito[]> {
+  private async insertarOutbox(
+    c: PoolClient,
+    procesados: Procesado[],
+    prueba: string | null,
+  ): Promise<Escrito[]> {
     const e4 = new Date().toISOString();
     const COLS = 7;
+    // Los dos ultimos parametros son del LOTE, no de la fila: van una sola vez
+    // al final y todas las tuplas los referencian.
+    const pE4 = procesados.length * COLS + 1;
+    const pPrueba = pE4 + 1;
     const tuplas = procesados.map((_, i) => {
       const b = i * COLS;
-      return `($${b + 1}, $${b + 2}, $${b + 3}::jsonb, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${procesados.length * COLS + 1}::timestamptz)`;
+      return `($${b + 1}, $${b + 2}, $${b + 3}::jsonb, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${pE4}::timestamptz, $${pPrueba})`;
     });
-    const valores = procesados.flatMap((p) => [
+    const valores: unknown[] = procesados.flatMap((p) => [
       p.rpfId,
       p.payloadHash,
       JSON.stringify(p.sobre),
@@ -181,11 +200,11 @@ export class OutboxRepository {
       p.marcas.e2,
       p.marcas.e3,
     ]);
-    valores.push(e4);
+    valores.push(e4, prueba);
 
     const { rows } = await c.query<{ id: string; payload_hash: string; e4_commit: Date }>(
       `INSERT INTO ${this.e}.outbox
-         (rpf_id, payload_hash, envelope, e0_listo, e1_canonizado, e2_firmado, e3_cifrado, e4_commit)
+         (rpf_id, payload_hash, envelope, e0_listo, e1_canonizado, e2_firmado, e3_cifrado, e4_commit, prueba)
        VALUES ${tuplas.join(', ')}
        RETURNING id, payload_hash, e4_commit`,
       valores,
@@ -235,6 +254,8 @@ export class OutboxRepository {
       payload_hash: string;
       envelope: unknown;
       attempts: number;
+      prueba: string | null;
+      e4_commit: Date | null;
       e5_reclamado: Date;
     }>(
       `WITH lote AS (
@@ -253,7 +274,8 @@ export class OutboxRepository {
               e5_reclamado  = $3::timestamptz
          FROM lote
         WHERE o.id = lote.id
-        RETURNING o.id, o.rpf_id, o.payload_hash, o.envelope, o.attempts, o.e5_reclamado`,
+        RETURNING o.id, o.rpf_id, o.payload_hash, o.envelope, o.attempts,
+                  o.prueba, o.e4_commit, o.e5_reclamado`,
       [limite, capSeg, e5],
     );
 
@@ -264,6 +286,8 @@ export class OutboxRepository {
       payloadHash: r.payload_hash,
       envelope: r.envelope as Record<string, unknown>,
       attempts: r.attempts,
+      prueba: r.prueba,
+      e4: r.e4_commit?.toISOString() ?? null,
       e5: r.e5_reclamado.toISOString(),
     }));
   }

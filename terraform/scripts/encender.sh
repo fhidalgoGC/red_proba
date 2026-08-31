@@ -7,7 +7,7 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_comun.sh"
 escenario "${1:-}"
-ambar "Recrea 15 interface endpoints (~\$0,15/h con 1 AZ). Tarda unos minutos."
+ambar "Recrea 12 interface endpoints (~\$0,12/h con 1 AZ). Tarda unos minutos."
 fijar_perilla 1
 $TF apply -input=false -auto-approve
 guardar_docs

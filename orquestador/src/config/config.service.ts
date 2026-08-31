@@ -151,7 +151,7 @@ export function validarPerfil(doc: unknown, ruta: string): Perfil {
   const tamanoBytes = rango(d.pool?.tamano_bytes ?? [BYTES_MAXIMO, BYTES_MAXIMO], `${ruta}: pool.tamano_bytes`);
 
   // El piso NO es una preferencia: el esqueleto del documento fiscal de
-  // docs/02-payload.md pesa 1.240 bytes canonicos sin un solo item, y 1.403
+  // docs/02-payload.md pesa 1.864 bytes canonicos sin un solo item, y 2.024
   // con el item minimo. Pedir plantillas por debajo de eso obligaria a
   // mutilar el documento, y un documento mutilado no compara con nada.
   const piso = BYTES_MINIMO_VIABLE + RESERVA_RELLENO;
@@ -163,12 +163,17 @@ export function validarPerfil(doc: unknown, ruta: string): Perfil {
     );
   }
   if (tamanoBytes[1] > BYTES_MAXIMO) {
-    // Se avisa pero no se bloquea: el techo de 3.072 es del diseño, no de SQS
-    // (que admite 256 KB). Si alguien lo sube a proposito, que quede en el log.
-    Logger.warn(
-      `pool.tamano_bytes[1] = ${tamanoBytes[1]} supera el techo de diseño de ${BYTES_MAXIMO} B ` +
-      `(docs/02-payload.md). Los numeros dejan de ser comparables con los del documento.`,
-      ConfigService.name,
+    // BLOQUEA, no avisa. Cuando el techo eran 3.072 esto era un warn razonable:
+    // sobraban 1.024 bytes hasta el limite de KMS y pasarse solo hacia los
+    // numeros incomparables. Con el techo en 4.096 ya NO sobra nada — es el
+    // maximo de `kms:Sign` con MessageType RAW, el que exige ED25519_SHA_512.
+    // Un byte mas y la corrida arranca, genera el pool, y muere en C3 con un
+    // error de KMS que no menciona ni el generador ni esta config.
+    throw new Error(
+      `${ruta}: pool.tamano_bytes[1] = ${tamanoBytes[1]} supera ${BYTES_MAXIMO} B, que es el ` +
+      `limite DURO de kms:Sign con MessageType RAW (ED25519_SHA_512). Por encima la firma ` +
+      `falla en C3, no aqui. Para ir mas arriba hay que pasar a ED25519_PH_SHA_512 con digest, ` +
+      `y C3 y C4 tienen que cambiar a la vez.`,
     );
   }
 

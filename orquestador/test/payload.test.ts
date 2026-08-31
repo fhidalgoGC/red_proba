@@ -9,7 +9,7 @@ import {
   prng,
 } from '../src/generador/payload';
 
-const RANGO: [number, number] = [1536, 3072];
+const RANGO: [number, number] = [2048, 4096];
 const ITEMS: [number, number] = [1, 5];
 
 test('cada plantilla pesa EXACTAMENTE su tamaño objetivo', () => {
@@ -100,7 +100,61 @@ test('misma semilla, mismas plantillas', () => {
 });
 
 test('el piso medido no se movio', () => {
-  // Si alguien cambia la forma del documento este numero cambia — y el piso
+  // Si alguien cambia la forma del documento estos numeros cambian — y el piso
   // documentado en perfil.yaml y en el error de config queda mintiendo.
-  assert.equal(BYTES_MINIMO_VIABLE, 1433);
+  assert.equal(BYTES_MINIMO_VIABLE, 2024);
+  assert.equal(BYTES_MAXIMO, 4096);
+  // 2 KB tiene que seguir siendo pedible: es el minimo del perfil por defecto.
+  assert.ok(BYTES_MINIMO_VIABLE + RESERVA_RELLENO <= 2048);
+});
+
+test('el esqueleto tiene 70 atributos hoja fijos', () => {
+  // El numero es contrato: es lo que dice el README y lo que se pidio. Un
+  // atributo que se cuela sin querer mueve el piso de tamaño y el pool
+  // empieza a rechazar targets que antes aceptaba.
+  const hojas = (v: unknown): number =>
+    Array.isArray(v)
+      ? 1
+      : v !== null && typeof v === 'object'
+        ? Object.values(v as object).reduce((a, x) => a + hojas(x), 0)
+        : 1;
+
+  const p = construirPlantilla(0, prng(1), {
+    tamanoBytes: [BYTES_MAXIMO, BYTES_MAXIMO],
+    itemsPorDocumento: [1, 1],
+  });
+  const fijas = Object.entries(p.doc)
+    .filter(([k]) => k !== 'items')
+    .reduce((a, [, v]) => a + hojas(v), 0);
+
+  assert.equal(fijas, 70);
+  assert.equal(Object.keys((p.doc.items as object[])[0]!).length, 8);
+});
+
+test('el piso del rango aguanta la cola de la distribucion', () => {
+  // POR QUE ESTE TEST EXISTE: el tamaño del esqueleto no es constante — los
+  // importes, el numero de puerta y el nombre de calle varian de largo, y el
+  // esqueleto oscila ~25 B. Un piso calibrado con el caso MEDIO pasa mil
+  // plantillas y revienta en la dos mil, en `ajustarATamano`, a mitad del
+  // arranque del pool.
+  //
+  // Y hay que medirlo por el camino REAL: con `itemsPorDocumento: [1, 1]` se
+  // consumen otros sorteos del PRNG y la cola queda sin explorar. Asi se colo
+  // la primera calibracion.
+  for (let semilla = 1; semilla <= 40; semilla++) {
+    const r = prng(semilla);
+    for (let i = 0; i < 500; i++) {
+      assert.doesNotThrow(
+        () => construirPlantilla(i, r, { tamanoBytes: RANGO, itemsPorDocumento: ITEMS }),
+        `semilla ${semilla}, plantilla ${i}: el piso ${RANGO[0]} no aguanta`,
+      );
+    }
+  }
+});
+
+test('el techo no supera el limite de KMS Sign con MessageType RAW', () => {
+  // `kms:Sign` con RAW —lo que exige ED25519_SHA_512— acepta hasta 4096 bytes.
+  // Un techo por encima no falla aqui: falla en C3, en produccion, con un
+  // error de KMS que no apunta al generador.
+  assert.ok(BYTES_MAXIMO <= 4096);
 });

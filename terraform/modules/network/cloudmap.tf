@@ -1,23 +1,21 @@
-# ── Cloud Map · api-NN.poc.local / db-NN.poc.local ───────────────────────
+# ── Cloud Map · api-NN.poc.local ─────────────────────────────────────────
 #
-# La zona se crea en la VPC de C3 y se ASOCIA tambien a la de ORQ, para que
-# el orquestador resuelva api-NN.poc.local sin montar un balanceador.
+# La zona vive en la VPC de C3 y el orquestador corre en esa misma VPC, asi
+# que resuelve api-NN.poc.local sin asociacion de zona ni balanceador. Antes
+# hacia falta un aws_route53_zone_association hacia la VPC de ORQ; con ORQ
+# dentro de C3 sobra.
+#
+# Las bases no entran aca: RDS trae su propio endpoint DNS.
 
 resource "aws_service_discovery_private_dns_namespace" "poc" {
   name        = var.namespace
   vpc         = aws_vpc.esta["c3"].id
-  description = "Descubrimiento interno de C3. Asociada tambien a ORQ."
+  description = "Descubrimiento interno de C3. El orquestador corre aca dentro."
 
   tags = {
     Name   = "${var.name_prefix}-ns-${var.namespace}"
     Domain = "c3"
   }
-}
-
-# La zona nace asociada solo a C3; esto la hace visible desde ORQ.
-resource "aws_route53_zone_association" "orq" {
-  zone_id = aws_service_discovery_private_dns_namespace.poc.hosted_zone
-  vpc_id  = aws_vpc.esta["orq"].id
 }
 
 # C4 tiene su propio namespace: no comparte DNS con C3 ni con ORQ.

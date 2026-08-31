@@ -39,10 +39,12 @@ data "aws_iam_policy_document" "kms_base" {
 # KMS SI soporta Ed25519: key spec ECC_NIST_EDWARDS25519, algoritmo
 # ED25519_SHA_512 con MessageType RAW.
 #
-# ⚠ RAW acepta mensajes de 0-4096 bytes. El payload canonico son 3072 →
-#   entra con 1024 de margen. Si alguien sube el target por encima de 4096,
-#   RAW deja de funcionar y hay que pasar a ED25519_PH_SHA_512 con digest.
-#   Los dos MessageType NO son intercambiables: C3 y C4 deben coincidir.
+# ⚠ RAW acepta mensajes de 0-4096 bytes, y el techo del payload canonico es
+#   exactamente 4096 (pool.tamano_bytes: [2048, 4096]) → MARGEN CERO. Ya no hay
+#   holgura: subir `pool.tamano_bytes[1]` un solo byte hace fallar kms:Sign en
+#   C3, con un error de KMS que no apunta al generador. Para ir mas arriba hay
+#   que pasar a ED25519_PH_SHA_512 con digest, y los dos MessageType NO son
+#   intercambiables: C3 y C4 tendrian que cambiar a la vez.
 
 data "aws_iam_policy_document" "firma" {
   source_policy_documents = [data.aws_iam_policy_document.kms_base.json]

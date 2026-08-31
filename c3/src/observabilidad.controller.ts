@@ -4,7 +4,7 @@ import { BdService } from './bd/bd.service';
 import { OutboxRepository } from './bd/outbox.repository';
 import { RelayService } from './relay/relay.service';
 import { SaludDto, StatusDto } from './eventos.dto';
-import { RegistroService } from './registro.service';
+import { RegistroService } from './metricas/registro.service';
 import { RETARDO } from './retardo';
 
 /**
@@ -65,11 +65,12 @@ export class ObservabilidadController {
       'Es el lado RECIBIDO de la conciliacion: restarlo contra el `sent` del ' +
       'orquestador es lo que responde P4, porque desde un solo lado nunca puedes ' +
       'distinguir «no lo mande» de «lo mande y no llego».\n\n' +
-      '⚠ Una prueba NO aparece aqui hasta que cierra su primera ventana: los ' +
-      'contadores del minuto en curso viven aparte y solo se vuelcan al cerrarlo. ' +
-      'Un `pruebas: []` en los primeros segundos de una corrida es normal, no es ' +
-      'que no este llegando nada — para eso esta el `GET /batch/{id}` del ' +
-      'orquestador, que si va en vivo.',
+      'Va EN VIVO: el total se reconstruye en cada llamada desde los segundos ya ' +
+      'acumulados, no desde el ultimo volcado a disco. El archivo puede ir hasta un ' +
+      'minuto por detras (ver el periodo de volcado); esto no.\n\n' +
+      '`pasos` son los p50 en ms de cada tramo — `canonical`, `sign`, `encrypt`, ' +
+      '`outbox`, `pipeline`, `delay`, `wait`, `sqs`. El detalle por segundo, con ' +
+      '`init`/`completed` y p95/p99/max de cada tramo, esta en el archivo.',
   })
   @ApiResponse({ status: 200, type: StatusDto, description: 'Una entrada por prueba vista desde que arranco el proceso.' })
   status(): StatusDto {

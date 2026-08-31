@@ -1,10 +1,18 @@
 # ── D-01 · Una VPC por dominio de confianza ──────────────────────────────
 #
-# Tres VPC, CIDR sin traslape. El traslape no es estetico: el peering
-# ORQ<->C3 falla al crearse si chocan (requisito de ORQ-06).
+# DOS VPC: C3 (participante) y C4 (operador neutro). Son los dos dominios
+# de confianza reales, y entre ellos NO hay ninguna ruta: la cola es el
+# unico canal (D-03).
+#
+# El orquestador NO tiene VPC propia: vive dentro de la de C3, con su
+# propio security group. Es andamio de prueba, no un dominio de confianza
+# — darle una VPC solo anadia un peering que mantener, y un peering es
+# justo el tipo de cosa que alguien podria replicar despues hacia C4.
+# Sin VPC de ORQ no hay peering en toda la PoC, y "no hay camino" deja de
+# depender de que nadie toque una tabla de rutas.
 #
 # ⚠ La cuenta ya tiene 10.0.0.0/16 (VPC_ACCESS-vpc) y 10.16.0.0/16
-#   (TEST-APP-vpc), ajenas a esta PoC. Por eso arrancamos en 10.100.
+#   (TEST-APP-vpc), ajenas a esta PoC. Por eso arrancamos en 10.101.
 
 data "aws_availability_zones" "disponibles" {
   state = "available"
@@ -24,21 +32,21 @@ locals {
   azs_datos = slice(data.aws_availability_zones.disponibles.names, 0, max(var.az_count, 2))
 
   vpcs = {
-    orq = { cidr = var.cidr_orq, domain = "orq" }
-    c3  = { cidr = var.cidr_c3, domain = "c3" }
-    c4  = { cidr = var.cidr_c4, domain = "c4" }
+    c3 = { cidr = var.cidr_c3, domain = "c3" }
+    c4 = { cidr = var.cidr_c4, domain = "c4" }
   }
 
   # Interface endpoints. Sin NAT ni IGW, esto es la UNICA forma de que una
   # tarea alcance un servicio de AWS.
   #
-  # ORQ necesita ecr+logs para poder arrancar su propia imagen. El doc no lo
-  # lista, pero sin endpoints ORQ no puede hacer pull y la tarea nunca sale
-  # de PROVISIONING.
+  # El orquestador usa los de C3 -ecr+logs- porque corre en esa VPC. Sin
+  # ellos no puede hacer pull de su imagen y la tarea nunca sale de
+  # PROVISIONING. Alcanzarlos a nivel de red no le da nada de C4: su task
+  # role no tiene sqs ni kms, y la resource policy de la cola solo nombra
+  # a los roles de C3 y C4.
   endpoints = {
-    c3  = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
-    c4  = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
-    orq = ["ecr.api", "ecr.dkr", "logs"]
+    c3 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
+    c4 = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "sqs"]
   }
 }
 
@@ -95,7 +103,9 @@ resource "aws_subnet" "datos" {
 }
 
 # ── Tablas de ruta ───────────────────────────────────────────────────────
-# Sin rutas a 0.0.0.0/0 en ningun lado. Solo local, mas el peering ORQ<->C3.
+# Solo la ruta local de cada VPC, mas el gateway de S3. Sin 0.0.0.0/0, sin
+# peering, sin Transit Gateway: no hay NINGUNA entrada que lleve de C3 a C4
+# ni al reves. Eso es D-03 escrito en la topologia.
 
 resource "aws_route_table" "esta" {
   for_each = local.vpcs

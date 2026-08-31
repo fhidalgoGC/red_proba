@@ -74,10 +74,10 @@ async function main(): Promise<void> {
   for (let i = 0; i < RPFS; i++) {
     const rpfId = randomUUID();
     for (let seq = 1; seq <= POR_RPF; seq++) {
-      // Tamanos sorteados en [1536, 3072], no todos iguales: con tamano unico
+      // Tamanos sorteados en [2048, 4096], no todos iguales: con tamano unico
       // eventos/s y MB/s son la misma metrica y P3 no puede distinguir un
       // limite por operacion de uno por byte.
-      const tamano = 1536 + Math.floor(r() * (3072 - 1536));
+      const tamano = 2048 + Math.floor(r() * (4096 - 2048));
       legitimos.push(await productor.preparar(documento(r, rpfId, seq, tamano, partyId)));
     }
   }

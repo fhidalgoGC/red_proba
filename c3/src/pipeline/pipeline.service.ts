@@ -30,6 +30,7 @@ import { FirmadorService } from '../cripto/firmador.service';
 import { PseudonimoService } from '../cripto/pseudonimo.service';
 import { OutboxRepository } from '../bd/outbox.repository';
 import { DocumentoInvalido, MapperService } from '../mapper/mapper.service';
+import { MetricasService, ahora, msDesde } from '../metricas/metricas.service';
 import type { Sobre } from '../comun/sobre';
 
 /** Un documento que recorrio el pipeline entero. */
@@ -94,6 +95,7 @@ export class PipelineService {
     private readonly firmador: FirmadorService,
     private readonly cifrador: CifradorService,
     private readonly outbox: OutboxRepository,
+    private readonly metricas: MetricasService,
   ) {}
 
   /**
@@ -105,18 +107,26 @@ export class PipelineService {
    * defectuoso se llevaria los otros 19 por delante — y el ritmo medido caeria
    * por una causa que no es de arquitectura.
    */
-  async procesar(documentos: unknown[]): Promise<Resultado> {
+  async procesar(documentos: unknown[], prueba?: string): Promise<Resultado> {
     const partyId = this.pseudonimo.partyId;
     const procesados: Procesado[] = [];
     const descartados: Descartado[] = [];
+
+    // Reloj monotono del LOTE. Las marcas e0..e4 siguen siendo ISO porque su
+    // destino son columnas de la base; estas son duraciones, y en ms una
+    // canonizacion de 0,05 ms sale en 0 (C-09).
+    const tLote = ahora();
+    if (documentos.length > 0) this.metricas.abre(prueba, 'pipeline');
 
     for (let i = 0; i < documentos.length; i++) {
       // e0 · la llegada al mapper. Con el generador ya mudado al orquestador,
       // «payload generado» dejo de ser un momento que C3 pueda observar.
       const e0 = new Date().toISOString();
+      const t0 = ahora();
       const doc = documentos[i];
 
       let canonizado;
+      this.metricas.abre(prueba, 'canonical');
       try {
         canonizado = this.mapper.canonizar(doc, partyId);
       } catch (e) {
@@ -136,12 +146,24 @@ export class PipelineService {
         throw e;
       }
       const e1 = new Date().toISOString();
+      const t1 = ahora();
+      this.metricas.cierra(prueba, 'canonical', msDesde(t0, t1));
 
+      this.metricas.abre(prueba, 'sign');
       const { firma, keyId } = await this.firmador.firmar(canonizado.canonico);
       const e2 = new Date().toISOString();
+      const t2 = ahora();
+      // El paso mas caro y el que responde P3. Incluye la llamada a KMS
+      // completa: cola del cliente del SDK, red y firma.
+      this.metricas.cierra(prueba, 'sign', msDesde(t1, t2));
 
+      this.metricas.abre(prueba, 'encrypt');
       const sobre = await this.cifrador.cifrar(canonizado.payload, firma, keyId);
       const e3 = new Date().toISOString();
+      // Data key (la mayoria de las veces cacheada) + AES-256-GCM. Un p99 muy
+      // por encima del p50 aqui es la renovacion de la data key asomando: una
+      // llamada a KMS cada `eventosPorDataKey` eventos.
+      this.metricas.cierra(prueba, 'encrypt', msDesde(t2));
 
       procesados.push({
         rpfId: canonizado.rpfId,
@@ -161,7 +183,17 @@ export class PipelineService {
     // error sube y el lote NO se contesta con 202: decir «aceptado» sobre
     // eventos que no se escribieron seria una mentira que solo se descubre
     // al conciliar, cuando ya no hay forma de recuperarlos.
-    const escritos = await this.outbox.escribir(procesados);
+    const tOutbox = ahora();
+    if (procesados.length > 0) this.metricas.abre(prueba, 'outbox');
+    const escritos = await this.outbox.escribir(procesados, prueba);
+    // Una muestra por LOTE, no por documento: es UNA transaccion. Dividirla
+    // entre N documentos daria un numero mas bonito y sin significado — lo que
+    // cuesta es el BEGIN/COMMIT, no cada fila.
+    //
+    // Y solo si hubo algo que escribir: un lote entero descartado no toca la
+    // base, y su 0,001 ms hundiria el p50 de un paso que no ocurrio.
+    if (procesados.length > 0) this.metricas.cierra(prueba, 'outbox', msDesde(tOutbox));
+
     escritos.forEach((w, i) => {
       const p = procesados[i];
       if (p) {
@@ -169,6 +201,12 @@ export class PipelineService {
         p.marcas.e4 = w.e4;
       }
     });
+
+    // El loop entero: entrada al mapper -> commit. NO es la latencia de la
+    // peticion; le falta el parseo del cuerpo, la respuesta y el retardo
+    // artificial de C3_DELAY_MS. Tener los dos separados es lo que permite
+    // decir si 800 ms de respuesta son de la firma o de una perilla de prueba.
+    if (documentos.length > 0) this.metricas.cierra(prueba, 'pipeline', msDesde(tLote));
 
     if (descartados.length > 0) {
       // Un descarte por linea y con su motivo: agregado ("3 descartes") no es

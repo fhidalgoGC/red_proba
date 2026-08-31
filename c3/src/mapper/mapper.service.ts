@@ -66,7 +66,7 @@ export class DocumentoInvalido extends Error {
  * Rango de tamano canonico aceptado, en bytes.
  *
  * Los defaults son MAS ANCHOS que lo que el orquestador emite hoy
- * (`pool.tamano_bytes: [1536, 3072]`) a proposito: el mapper no esta para
+ * (`pool.tamano_bytes: [2048, 4096]`) a proposito: el mapper no esta para
  * replicar la configuracion del arnes, sino para atrapar un documento
  * absurdo. Si algun dia se quiere que la corrida falle cuando el tamano se
  * sale de su propio rango, se aprieta con estas dos variables.

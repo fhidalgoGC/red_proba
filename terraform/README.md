@@ -16,6 +16,31 @@ Tres niveles, de menos a más agresivo:
 | **Destruir** | `scripts/destruir.sh <esc>` | exporta, purga, destruye, verifica | nada |
 | **Verificar** | `scripts/verificar-limpio.sh` | lista lo que quedó vivo | — |
 
+Desde la raíz del repo hay un frente único sobre esos scripts, que además
+decide **cuántos clientes**:
+
+```bash
+sh terraform:deploy --clients 1     # la prueba inicial · 1 tenant
+sh terraform:deploy --clients 50    # hasta 200
+sh terraform:deploy --down          # apaga: cómputo y endpoints a cero
+sh terraform:deploy --estado        # qué hay desplegado
+sh terraform:deploy --clients 8 --plan   # enseña el plan y no aplica
+```
+
+No reimplementa nada: escribe `clientes.auto.tfvars` con la lista de tenants
+—mismo patrón que `estado.auto.tfvars`, y por la misma razón: un `-var` no
+coincide con lo que el plan guardado relee— y delega en `crear.sh`,
+`actualizar.sh`, `encender.sh` y `apagar.sh`.
+
+Antes de aplicar avisa de lo que no se arregla reintentando: bajar el número de
+clientes **destruye** los tenants sobrantes con su Postgres; por encima de 40
+clientes se topa con la cuota de instancias RDS; a partir de 50, con las de KMS
+y Fargate. Y no enciende si las imágenes no están en ECR — encender sin ellas no
+da un error de despliegue, da servicios reintentando para siempre.
+
+⚠ El escenario sigue siendo `oneClient` aunque pidas 50 clientes: es el único
+root module con código. `50client/` es hoy solo un README.
+
 Detalle en [scripts/README.md](scripts/README.md). Los IDs de cada apply
 quedan en [docs/](docs/README.md).
 
@@ -27,11 +52,11 @@ segundos y conserva el estado que costó horas montar (T-07).
 ```
 terraform/
 ├── modules/          código real, uno por dominio (T-02 … T-06)
-│   ├── network/      3 VPC, subnets, endpoints, peering ORQ↔C3, Cloud Map
+│   ├── network/      2 VPC (C3, C4), subnets, endpoints, Cloud Map. Sin peering
 │   ├── security/     SG por for_each, roles IAM, las 4 llaves KMS
 │   ├── messaging/    cola FIFO + DLQ + resource policy cross-account
-│   ├── tenant/       for_each → 2 task defs + 2 services + Cloud Map + logs
-│   ├── c4/           servicios del operador neutro + su Postgres
+│   ├── tenant/       for_each → task def + service + RDS + Cloud Map + logs
+│   ├── c4/           consumidor del operador neutro + su RDS
 │   └── orq/          contenedor de carga
 ├── oneClient/        root module — var.tenants = ["01"]
 ├── 50client/         root module — var.tenants = ["01" … "50"]
@@ -88,7 +113,8 @@ Probado antes, no descubierto el día de la demo:
       por dominio. Con una sola cuenta el invariante C3/C4 se sostiene solo
       con IAM, no con frontera de cuenta.
 - [ ] Región: `us-east-1` (~$64 el cómputo) vs `sa-east-1` (~$86).
-- [ ] CIDR de las tres VPC — no pueden traslaparse (requisito de ORQ-06).
+- [ ] CIDR de las dos VPC (C3 y C4) — ya no hay peering que exija que no se
+      traslapen, pero mantenerlos separados sigue siendo higiene.
 - [ ] Bucket + tabla de lock del backend remoto (T-01).
 - [ ] ¿Ya se pidieron los aumentos de cuota? KMS 1.000 → 3.000 ops/s y
       Fargate vCPU. **Tardan días** y sin ellos la prueba mide throttling.

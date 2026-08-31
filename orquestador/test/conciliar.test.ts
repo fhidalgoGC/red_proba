@@ -12,8 +12,8 @@ import type { ExpedienteManifiesto, Manifiesto, VolcadoInbox } from '../src/conc
  * contra los valores distintos que tiene dentro. Eso solo encuentra huecos
  * INTERIORES: si falta el primero, `MIN` se desplaza; si falta la cola, `MAX`
  * se desplaza; si se perdio el expediente entero, no hay ni fila que agrupar.
- * Y el modo de fallo mas probable de esta PoC -una tarea de Fargate que muere
- * con su outbox efimero encima- se lleva justo la cola.
+ * Y el modo de fallo mas probable de esta PoC -un relay que se detiene con
+ * filas todavia pendientes en su outbox- se lleva justo la cola.
  *
  * El manifiesto cierra ese punto ciego porque trae el rango que se emitio de
  * verdad, desde fuera de C4.

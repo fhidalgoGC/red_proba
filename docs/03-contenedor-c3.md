@@ -25,7 +25,8 @@ contenedores ni dos servicios.
 >   HMAC-SHA256 real de `KMS_HMAC_KEY_ID`, **completo, sin truncar**. Mismo
 >   largo, así que el tamaño canónico no se mueve y la llave de
 >   pseudonimización nunca sale del dominio del participante.
-> - **Los eventos ya no pesan todos 3.072 bytes**: llegan con tamaños
+> - **Los eventos ya no pesan todos 3.072 bytes**: son 70 atributos hoja
+>   fijos (+8 por ítem) y llegan con tamaños sorteados en `[2048, 4096]`,
 >   sorteados en un rango. Ver [02-payload](02-payload.md).
 
 ## Flujo

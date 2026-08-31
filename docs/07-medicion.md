@@ -190,8 +190,8 @@ huecos *interiores*:
 | Los `sequence` 9 y 10 | ❌ | `MAX` pasa a 8 y el rango 1..8 es denso |
 | El `rpf_id` entero | ❌ | No hay fila, no hay grupo, no hay nada que agrupar |
 
-Y el fallo más probable de esta PoC —una tarea de Fargate que muere con su
-outbox efímero encima— **se lleva justo la cola**. Desde C4 ese caso es
+Y el fallo más probable de esta PoC —un relay que se detiene con filas todavía
+pendientes en su outbox— **se lleva justo la cola**. Desde C4 ese caso es
 indistinguible de un expediente que terminó ahí.
 
 Le falta un dato que solo tiene quien emitió: **cuántos eventos tenía que

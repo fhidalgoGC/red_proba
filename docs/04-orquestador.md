@@ -7,8 +7,9 @@
 > documentos** y se los manda hechos. El cuerpo del request pasó de
 > `{ n: 40 }` a `{ documentos: [...] }`.
 >
-> Además, las plantillas ya **no pesan todas 3.072 bytes**: se sortean en un
-> rango (`[1536, 3072]` por defecto). Ver [02-payload](02-payload.md).
+> Además, las plantillas ya **no pesan todas 3.072 bytes**: el documento tiene
+> **70 atributos hoja fijos** (+8 por ítem) y su tamaño se sortea en un rango
+> (`[2048, 4096]` por defecto). Ver [02-payload](02-payload.md).
 >
 > Lo que sigue vigente sin cambios: O-01 a O-07, el perfil de fases, Zipf,
 > Poisson y el lazo abierto. Lo que cambió está detallado en
@@ -149,9 +150,11 @@ saturación sin necesidad de métricas en AWS.
 
 ## Red
 
-VPC peering hacia C3 (ver ORQ-06 en [01-arquitectura](01-arquitectura.md)). La
-zona privada de Cloud Map se asocia también a la VPC del orquestador para que
-resuelva `api-NN.poc.local`.
+El orquestador corre **dentro de la VPC de C3**, en su propio security group
+(ver ORQ-06 en [01-arquitectura](01-arquitectura.md)). No hay peering: la zona
+privada de Cloud Map ya está en esa VPC, así que resuelve `api-NN.poc.local`
+directamente. `sg-orq` no está en el ingress de 5432 de ningún tenant — llega al
+API por 8080 y a ninguna base.
 
 **El orquestador no se conecta a C4 en absoluto.** Si necesita verificar lo que
 llegó, que lo haga leyendo métricas, no la cola.

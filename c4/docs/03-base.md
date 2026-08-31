@@ -1,5 +1,11 @@
 # 03 · La base
 
+⚠ **Es una base PROPIA, no un esquema dentro de la de C3.** C3 y C4 son
+dominios sin ruta de red entre ellos (D-03): el único canal es la cola.
+Compartir base los volvería consultables entre sí, y una conciliación por
+`JOIN` pasaría en local siendo imposible en producción. En AWS son dos RDS
+separados; en local, `rpf_c4` frente a `rpf_c3_tenant01` y `rpf_c3_tenant02`.
+
 Siete tablas en el esquema `c4` (configurable con `C4_ESQUEMA`). El esquema se
 aplica **al arrancar** y es idempotente: la PoC levanta y baja infraestructura
 con un comando, y un paso manual entre el `apply` y la corrida es justo el tipo

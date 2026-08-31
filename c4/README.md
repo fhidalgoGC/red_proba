@@ -8,7 +8,10 @@ Termina cuando el evento queda guardado en el Postgres de C4 — ese COMMIT es
 
 **Documentación completa: [docs/](docs/)** — cómo funciona, la criptografía, la
 base, la medición, la configuración, las reglas y las pruebas.
-Diagramas: https://claude.ai/code/artifact/80828c05-58ef-4586-9ad8-80bb80d0a344
+
+> **Diagramas** — [`docs/diagramas.html`](docs/diagramas.html) (HTML
+> autocontenido, se abre desde el disco) · publicado en
+> [**claude.ai**](https://claude.ai/code/artifact/80828c05-58ef-4586-9ad8-80bb80d0a344)
 
 Diseño del track: [../docs/05-contenedor-c4.md](../docs/05-contenedor-c4.md)
 
@@ -24,6 +27,7 @@ Diseño del track: [../docs/05-contenedor-c4.md](../docs/05-contenedor-c4.md)
 | `G-06` Marcas de tiempo `e7..e10` | ✅ (+ `e7b`, ver abajo) |
 | `G-07` Manejo de DLQ | ✅ |
 | `G-08` Volcado del inbox para conciliar | ✅ (`npm run informe`) |
+| `G-09` Endpoint de salud (`/health`, `/status`) | ✅ |
 
 **El informe se saca por CLI**, no por HTTP:
 
@@ -37,10 +41,27 @@ cruza `npm run conciliar` (ver `orquestador/README.md`). `G-05` por sí solo ve
 entero son invisibles desde aquí, porque el rango con el que compara sale de los
 propios datos que llegaron.
 
-**No expone endpoints.** La cola es su única entrada; el Postgres y los logs,
-su única salida. No es un API: es un worker, y por eso arranca con
-`createApplicationContext` y no con un servidor HTTP — igual que dice la task
-definition de `terraform/modules/c4`, sin `portMappings` y sin balanceador.
+**Sigue sin ser un API.** La cola es su única entrada y el Postgres su única
+salida; lo único que sirve por HTTP es su propia salud (`G-09`):
+
+```bash
+curl localhost:3003/health    # ok, base, cola, estado del consumidor
+curl localhost:3003/status    # solo contadores, no toca la base
+open  http://localhost:3003/docs   # Swagger
+```
+
+Ese endpoint existe porque **un proceso vivo no dice nada**: C4 puede estar
+corriendo con el Postgres caído y seguir sacando mensajes de la cola — los
+borraría sin persistir y P4 daría de menos, sin un solo error visible desde
+fuera. Por eso `ok` refleja **la base**, no el proceso, igual que en C3 (C-08).
+
+Documentado en Swagger, como C3 y el orquestador: **`http://localhost:3003/docs`**.
+
+Escucha en `127.0.0.1`, así que la task definition de `terraform/modules/c4`
+sigue **sin `portMappings` y sin balanceador** — el único que lo consulta es el
+`healthCheck` de la propia task, desde dentro del contenedor. Y con
+`C4_PORT=0` arranca como contexto puro, sin abrir nada: exactamente como corría
+antes de `G-09`.
 
 ## El camino de un mensaje
 
@@ -192,7 +213,7 @@ que C4 tenga algo legítimo que abrir, y sobre todo algo **ilegítimo** con lo
 que probar `G-07`.
 
 El punta a punta publica 12 documentos legítimos (3 expedientes × 4 eventos,
-tamaños sorteados en `[1536, 3072]`) y **6 venenos**, uno por cada guarda:
+tamaños sorteados en `[2048, 4096]`) y **6 venenos**, uno por cada guarda:
 
 | Veneno | Motivo esperado |
 |---|---|

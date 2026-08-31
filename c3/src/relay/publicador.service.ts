@@ -23,6 +23,7 @@ import {
   type SendMessageBatchRequestEntry,
 } from '@aws-sdk/client-sqs';
 import { ConfigService } from '../config/config.service';
+import { ahora, msDesde } from '../metricas/muestras';
 import type { Reclamado } from '../bd/outbox.repository';
 
 /**
@@ -57,6 +58,17 @@ export interface ResultadoEnvio {
   permanentes: Array<{ id: string; codigo: string; detalle: string }>;
   /** Instante en que SQS confirmo. Es `e6`. */
   e6: string;
+  /**
+   * Cuanto tardo la LLAMADA, en ms. Es el tramo e5→e6 medido con reloj
+   * monotono en vez de restando dos ISO: la resta da milisegundos enteros y
+   * una publicacion de 4,3 ms saldria como 4.
+   *
+   * Es de la llamada, no del mensaje: `SendMessageBatch` lleva hasta 10 sobres.
+   * Cuenta tambien cuando la llamada FALLA — un timeout de 3 segundos es
+   * informacion, y dejarlo fuera haria que el p99 mejorase justo cuando la
+   * cola se cae.
+   */
+  ms: number;
 }
 
 @Injectable()
@@ -88,7 +100,7 @@ export class PublicadorService implements OnApplicationShutdown {
    */
   async publicar(filas: Reclamado[]): Promise<ResultadoEnvio> {
     if (filas.length === 0) {
-      return { ok: [], reintentar: [], permanentes: [], e6: new Date().toISOString() };
+      return { ok: [], reintentar: [], permanentes: [], e6: new Date().toISOString(), ms: 0 };
     }
 
     const porId = new Map<string, Reclamado>();
@@ -109,6 +121,7 @@ export class PublicadorService implements OnApplicationShutdown {
     this.contadores.mensajes += filas.length;
 
     let r;
+    const t0 = ahora();
     try {
       r = await this.sqs.send(
         new SendMessageBatchCommand({ QueueUrl: this.config.colaUrl, Entries: entradas }),
@@ -118,16 +131,18 @@ export class PublicadorService implements OnApplicationShutdown {
       // las filas corren la misma suerte.
       const codigo = codigoDe(e);
       const detalle = mensajeDe(e);
+      const ms = msDesde(t0);
       this.contadores.fallidos += filas.length;
       const items = filas.map((f) => ({ id: f.id, codigo, detalle }));
       return PERMANENTES.has(codigo)
-        ? { ok: [], reintentar: [], permanentes: items, e6: new Date().toISOString() }
-        : { ok: [], reintentar: items, permanentes: [], e6: new Date().toISOString() };
+        ? { ok: [], reintentar: [], permanentes: items, e6: new Date().toISOString(), ms }
+        : { ok: [], reintentar: items, permanentes: [], e6: new Date().toISOString(), ms };
     }
 
     // El e6 se toma AQUI, cuando SQS ya contesto. Tomarlo antes del envio
     // metería la latencia de la cola dentro del tramo e5→e6 de C3.
     const e6 = new Date().toISOString();
+    const ms = msDesde(t0);
     const ok: string[] = [];
     const reintentar: ResultadoEnvio['reintentar'] = [];
     const permanentes: ResultadoEnvio['permanentes'] = [];
@@ -159,7 +174,7 @@ export class PublicadorService implements OnApplicationShutdown {
       );
     }
 
-    return { ok, reintentar, permanentes, e6 };
+    return { ok, reintentar, permanentes, e6, ms };
   }
 }
 

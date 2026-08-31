@@ -50,6 +50,7 @@ import { BdService } from '../src/bd/bd.service';
 import { OutboxRepository } from '../src/bd/outbox.repository';
 import { MapperService } from '../src/mapper/mapper.service';
 import { PipelineService } from '../src/pipeline/pipeline.service';
+import { MetricasService } from '../src/metricas/metricas.service';
 
 /** Los ARN de `terraform/oneClient`. Se pueden pisar por entorno. */
 const REGION = process.env.AWS_REGION ?? 'us-west-2';
@@ -93,7 +94,9 @@ async function main(): Promise<void> {
   const bd = new BdService(config);
   await bd.onApplicationBootstrap();
   const outbox = new OutboxRepository(bd);
-  const pipeline = new PipelineService(pseudonimo, new MapperService(), firmador, cifrador, outbox);
+  const pipeline = new PipelineService(
+    pseudonimo, new MapperService(), firmador, cifrador, outbox, new MetricasService(),
+  );
 
   ok(
     pseudonimo.partyId.length === PARTY_ID_LARGO && /^hmac:[0-9a-f]{64}$/.test(pseudonimo.partyId),

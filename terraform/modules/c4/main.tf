@@ -89,8 +89,33 @@ resource "aws_ecs_task_definition" "consumer" {
       { name = "KMS_VERIFY_KEY_ID", value = var.kms_firma_arn },
       { name = "SQS_BATCH_SIZE", value = "10" },
       { name = "SQS_WAIT_SECONDS", value = "20" },
+      # G-09 · el health. Sigue SIN portMappings y sin balanceador: escucha en
+      # 127.0.0.1, dentro del contenedor, y el unico que lo consulta es el
+      # healthCheck de abajo. C4 no expone nada a la red — el invariante de
+      # D-03 no se toca.
+      { name = "C4_PORT", value = "3003" },
+      { name = "C4_HEALTH_HOST", value = "127.0.0.1" },
     ]
     secrets = [{ name = "DB_PASSWORD", valueFrom = var.db_password_secret_arn }]
+
+    # ⚠ Se comprueba `ok:true`, no el codigo HTTP. El endpoint contesta 200
+    # tambien cuando la base esta caida, con `ok:false` dentro: un health que
+    # respondiera 200 a secas dejaria la task en verde mientras C4 saca
+    # mensajes de la cola sin poder persistirlos, y P4 daria de menos sin un
+    # solo error.
+    #
+    # Con `node -e` y no con curl: la imagen no trae curl, y anadirlo solo para
+    # esto engorda el contenedor.
+    healthCheck = {
+      command = [
+        "CMD-SHELL",
+        "node -e \"fetch('http://127.0.0.1:3003/health').then(r=>r.json()).then(j=>process.exit(j.ok?0:1)).catch(()=>process.exit(1))\""
+      ]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 20
+    }
 
     stopTimeout = 30
 

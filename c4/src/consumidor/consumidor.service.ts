@@ -73,6 +73,24 @@ export class ConsumidorService implements OnApplicationBootstrap, OnApplicationS
     bytes: 0,
   };
 
+  /**
+   * Lo que el health necesita saber del lazo. `corriendo` en false con el
+   * proceso vivo es un consumidor que ya paro —C4_SALIR_TRAS_VACIOS, o un
+   * cierre en curso— y no esta consumiendo nada, aunque el contenedor siga en
+   * pie: desde fuera las dos situaciones son indistinguibles sin esto.
+   */
+  estado(): {
+    corriendo: boolean;
+    vacios_seguidos: number;
+    contadores: typeof ConsumidorService.prototype.contadores;
+  } {
+    return {
+      corriendo: this.corriendo,
+      vacios_seguidos: this.vaciosSeguidos,
+      contadores: { ...this.contadores },
+    };
+  }
+
   constructor(
     private readonly config: ConfigService,
     private readonly procesador: ProcesadorService,

@@ -43,13 +43,11 @@ variable "tenants" {
 }
 
 # ── CIDR ─────────────────────────────────────────────────────────────────
+# Dos VPC: C3 -donde tambien corre el orquestador- y C4. Entre ellas no hay
+# ninguna ruta; la cola es el unico canal.
+#
 # ⚠ La cuenta ya tiene 10.0.0.0/16 y 10.16.0.0/16 de otro equipo.
-#   Arrancamos en 10.100 para no chocar. El peering falla al crearse si
-#   los CIDR se traslapan.
-variable "cidr_orq" {
-  type    = string
-  default = "10.100.0.0/16"
-}
+#   Arrancamos en 10.101 para no chocar.
 variable "cidr_c3" {
   type    = string
   default = "10.101.0.0/16"
@@ -60,7 +58,7 @@ variable "cidr_c4" {
 }
 variable "az_count" {
   type        = number
-  description = "AZs por VPC. Cada interface endpoint cobra una ENI por AZ."
+  description = "AZs por VPC (2). Cada interface endpoint cobra una ENI por AZ."
   default     = 2
 }
 

@@ -152,10 +152,10 @@ export class LanzarBatchDto {
 
   @ApiPropertyOptional({
     type: [Number],
-    example: [1536, 3072],
+    example: [2048, 4096],
     description:
       'Rango [min, max] del tamaño canonico en bytes. El piso real del documento ' +
-      'fiscal es 1433 (1270 sin items); por debajo se rechaza. Reconstruye el pool.',
+      'fiscal es 2024 (1864 sin items); por debajo se rechaza. Reconstruye el pool.',
   })
   size?: [number, number];
 

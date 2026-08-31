@@ -25,8 +25,9 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression, Interval, SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '../config/config.service';
-import { OutboxRepository } from '../bd/outbox.repository';
-import { PublicadorService } from './publicador.service';
+import { OutboxRepository, type Reclamado } from '../bd/outbox.repository';
+import { MetricasService } from '../metricas/metricas.service';
+import { PublicadorService, type ResultadoEnvio } from './publicador.service';
 
 /** El nombre con el que el tick vive en el SchedulerRegistry. */
 const NOMBRE_TICK = 'relay-tick';
@@ -57,6 +58,7 @@ export class RelayService implements OnModuleInit, OnApplicationShutdown {
     private readonly outbox: OutboxRepository,
     private readonly publicador: PublicadorService,
     private readonly scheduler: SchedulerRegistry,
+    private readonly metricas: MetricasService,
   ) {}
 
   /**
@@ -129,6 +131,11 @@ export class RelayService implements OnModuleInit, OnApplicationShutdown {
     // reintentan solas. No hace falta compensacion.
     const r = await this.publicador.publicar(filas);
 
+    // C-09 · los dos tramos que solo el relay puede ver. Se anotan ANTES de
+    // marcar las filas: si el UPDATE de `marcarEnviadas` falla, el tiempo que
+    // la cola tardo en aceptar ya se midio y no se pierde.
+    this.anotarMetricas(filas, r);
+
     if (r.ok.length > 0) {
       await this.outbox.marcarEnviadas(r.ok, r.e6);
       this.contadores.publicados += r.ok.length;
@@ -150,6 +157,61 @@ export class RelayService implements OnModuleInit, OnApplicationShutdown {
 
     this.actualizarBreaker(r.ok.length, filas.length);
     return filas.length;
+  }
+
+  /**
+   * Reparte los tiempos del lote entre las pruebas que hay dentro.
+   *
+   * ⚠ `wait` ES POR FILA y `sqs` ES POR LOTE, y esa asimetria es real: cada
+   * fila espero lo suyo en el outbox, pero la publicacion fue UNA llamada. Por
+   * eso el tramo de la cola se anota una vez por prueba presente en el lote y
+   * no una vez por mensaje — repetirlo diez veces daria un `n` de diez para una
+   * sola medicion y un p99 falsamente estable.
+   *
+   * En una corrida normal todas las filas de un lote son de la misma prueba
+   * (hay una corrida a la vez), asi que el reparto es exacto. El bucle existe
+   * para el caso de dos batches solapados, donde lo peor que pasa es que la
+   * misma llamada cuente en las dos pruebas.
+   */
+  private anotarMetricas(filas: Reclamado[], r: ResultadoEnvio): void {
+    const ok = new Set(r.ok);
+    const reintentar = new Set(r.reintentar.map((x) => x.id));
+    const pruebas = new Set<string | null>();
+
+    for (const f of filas) {
+      pruebas.add(f.prueba);
+      // Lo que la fila espero entre el commit y el reclamo. Es el tramo que
+      // delata un relay que no da abasto: si `wait` crece mientras `sqs` se
+      // mantiene, el cuello es el periodo del tick o el tamaño del lote, no la
+      // cola. Las dos marcas son ISO, asi que la resta va en ms enteros — para
+      // una espera de cientos de ms sobra.
+      //
+      // ⚠ SOLO EL PRIMER INTENTO. En un reintento, e5 se vuelve a escribir y
+      // la diferencia contra e4 incluye el backoff, que es una espera QUERIDA:
+      // una fila que fallo tres veces mostraria 30 segundos de "espera en el
+      // outbox" y pareceria un relay atascado cuando el problema es la cola.
+      // Eso ya se ve en `sqs.retry` y en `attempts`.
+      if (f.e4 !== null && f.attempts === 1) {
+        const espera = Date.parse(f.e5) - Date.parse(f.e4);
+        if (espera >= 0) this.metricas.paso(f.prueba ?? undefined, 'wait', espera);
+      }
+    }
+
+    for (const prueba of pruebas) {
+      const suyas = filas.filter((f) => f.prueba === prueba);
+      const nOk = suyas.filter((f) => ok.has(f.id)).length;
+      const nReintento = suyas.filter((f) => reintentar.has(f.id)).length;
+      // `failed` es lo que se fue a FAILED sin gastar intentos: un error
+      // permanente. Sumarlo con los que se van a reintentar borraria la
+      // diferencia entre «la cola dijo que no y no va a cambiar» y «la red se
+      // cayo un momento», que son dos diagnosticos opuestos.
+      this.metricas.publicacion(prueba ?? undefined, r.ms, {
+        mensajes: suyas.length,
+        ok: nOk,
+        reintento: nReintento,
+        fallidos: suyas.length - nOk - nReintento,
+      });
+    }
   }
 
   /**

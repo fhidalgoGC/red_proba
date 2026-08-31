@@ -82,15 +82,18 @@ pool:
   semilla: 20260830
 
   # Tamaño canonico objetivo, en BYTES. Rango [min, max] inclusivo, sorteado
-  # por plantilla. Un numero suelto (p.ej. `tamano_bytes: 3072`) pide tamaño
-  # fijo, que es el diseño original de docs/02-payload.md.
+  # por plantilla. Un numero suelto (p.ej. `tamano_bytes: 4096`) pide tamaño
+  # fijo para todas.
   #
-  # ⚠ EL PISO NO ES NEGOCIABLE: el esqueleto del documento fiscal — los ~52
-  # atributos hoja — pesa 1.240 bytes canonicos SIN un solo item, y 1.403 con
-  # el item minimo. Un documento fiscal sin items no existe. Por eso 1 KB es
-  # inalcanzable sin mutilar el documento, y un documento mutilado no compara
-  # con nada. El minimo admisible es 1.411 (1.403 + 8 de relleno reservado).
-  tamano_bytes: [1536, 3072]
+  # ⚠ EL PISO NO ES NEGOCIABLE: el esqueleto del documento fiscal — los 70
+  # atributos hoja — pesa hasta 1.864 bytes canonicos SIN un solo item, y 2.024
+  # con el item minimo. Un documento fiscal sin items no existe. El minimo
+  # admisible es 2.032 (2.024 + 8 de relleno reservado), asi que 2 KB entra con
+  # 16 bytes de margen y nada por debajo de 2.032 entra.
+  #
+  # ⚠ EL TECHO TAMPOCO: 4.096 es el limite de `kms:Sign` con MessageType RAW,
+  # que es el que exige ED25519_SHA_512. Un byte mas y la firma falla en C3.
+  tamano_bytes: [2048, 4096]
 
   # Items por documento. Rango [min, max]. Se RECORTA solo si no entra en el
   # tamaño sorteado: una plantilla de 1,5 KB no admite 5 items, y el generador

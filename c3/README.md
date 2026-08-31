@@ -8,6 +8,14 @@ contenedores ni dos services.
 
 Doc de referencia: [../docs/03-contenedor-c3.md](../docs/03-contenedor-c3.md)
 
+> **[Documentación completa en `docs/`](docs/README.md)** — ocho documentos: el
+> pipeline, el contrato de atributos, la criptografía, el outbox, el relay, la
+> configuración, la medición y las reglas.
+>
+> **Diagramas** — [`docs/diagramas.html`](docs/diagramas.html) (HTML
+> autocontenido, se abre desde el disco) · publicado en
+> [**claude.ai**](https://claude.ai/code/artifact/6048693b-e9d9-45d1-9b8b-e2c8ab048a37)
+
 > **ESTADO: el camino está completo.** Valida y canoniza (`C-02`), firma
 > (`C-03`), cifra (`C-04`), escribe el outbox en la transacción de negocio
 > (`C-05`) y **el relay lo publica en la cola FIFO de C4 (`C-06`)**.
@@ -20,7 +28,8 @@ Doc de referencia: [../docs/03-contenedor-c3.md](../docs/03-contenedor-c3.md)
 > en el Canonical Mapper. **`POST /events/generar` se eliminó**: `POST /events`
 > es la única entrada.
 >
-> Los eventos llegan con **tamaños variados** (`[1536, 3072]` bytes canónicos),
+> Los eventos llegan con **tamaños variados** (`[2048, 4096]` bytes canónicos,
+> 70 atributos hoja fijos + 8 por ítem),
 > no todos con 3.072. El JCS del orquestador y el de C3 tienen que ser el
 > **mismo código**: si divergen, el tamaño no cuadra y la firma no verifica.
 
@@ -109,48 +118,86 @@ credenciales, y para nada más: C4 **no puede abrir** lo que sale de ahí, porqu
 la `edk` no viene de `GenerateDataKey` y la llave no está en su lista blanca.
 
 ```bash
-npm test        # 107 tests, sin AWS
+npm test        # 155 tests; solo Postgres en 127.0.0.1:5433, sin AWS
 ```
 
-## Lo que sí registra ya
+## Lo que registra
 
-Aunque no procese, **mide**. Cada request trae la cabecera `x-prueba-id` del
-orquestador, y C3 agrupa por `(prueba, minuto)` y escribe una línea por minuto
-en `c3/logs/<prueba>__<tenant>.json` — **un objeto JSON válido por archivo**,
-con las ventanas en `minutos[]` y el acumulado en `totales`:
+Cada request trae la cabecera `x-prueba-id` del orquestador. C3 agrupa por
+`(prueba, segundo)` y escribe **un objeto JSON válido por archivo** en
+`c3/logs/<prueba>__<tenant>.json`, con el detalle por segundo, los minutos
+agregados y el total — mismo formato que el informe del orquestador, para poder
+ponerlos uno al lado del otro:
 
 ```jsonc
 {
-  "prueba": "xxt", "tenant": "tenant-01", "actualizado": "...",
-  "totales": { "peticiones": 800, "eventos": 800, "bytes": 1839121,
-               "bytes_medios_por_evento": 2299,
-               "event_ids_unicos": 800, "event_ids_duplicados": 0 },
-  "minutos": [ { "minuto": "2026-08-30T19:39:00.000Z", "completo": false,
-                 "cerrado_por": "silencio",
-                 "peticiones": 800, "eventos": 800, "bytes": 1839121,
-                 "peticiones_por_s": 40.1, "eventos_por_s": 40.1, "mb_por_s": 0.088,
-                 "event_ids_unicos": 800, "event_ids_duplicados": 0,
-                 "ventana_activa_s": 19.9 } ]
+  "prueba": "abc16", "tenant": "tenant-01",
+  "inicio": "…", "fin": "…", "duracion_s": 6.4, "cerrado_por": "silencio",
+  "total": { … },
+  "seconds": [ { "seg": 1, "at": "…", "metrics": {
+      "request": { "init": 4, "completed": 4, "failed": 0,
+                   "latency_p50_ms": 15.7, "latency_p99_ms": 17.9,
+                   "latency_max_ms": 17.9, "latency_avg_ms": 15.7, "samples": 4 },
+      "events":  { "init": 12, "completed": 12, "discarded": 0,
+                   "bytes": 36837, "weight": "36.0 KB", "per_request": 3,
+                   "event_ids_unicos": 12, "event_ids_duplicados": 0,
+                   "steps": {
+                     "canonical": { "init": 12, "completed": 12, "n": 12, "muestras": 12,
+                                    "p50_ms": 0.063, "p95_ms": 0.504, "p99_ms": 0.504,
+                                    "max_ms": 0.504, "avg_ms": 0.107, "suma_ms": 1.284 },
+                     "sign": {…}, "encrypt": {…}, "outbox": {…}, "pipeline": {…},
+                     "delay": {…}, "wait": {…}, "sqs": {…} } },
+      "sqs":     { "batches": 0, "messages": 0, "ok": 0, "retry": 0, "failed": 0 }
+  } } ],
+  "minutes": [ … ]        // solo con más de 60 segundos
 }
 ```
 
-- **El peso sale del cuerpo crudo**, no de re-serializar los documentos:
-  volver a pasarlos por `JSON.stringify` daría un número parecido pero no el
-  que viajó por el cable, y el cable es lo que se está midiendo.
+- **`init` no es `completed`.** Uno se cuenta al llegar la petición, el otro al
+  contestar el 202; no caen en el mismo segundo y ese desfase **es** la
+  latencia. Cuando el pipeline se atasca, `init` mantiene su ritmo y
+  `completed` se hunde.
+- **El mismo par baja a cada paso**, y ahí `init` cae en el segundo en que el
+  tramo empezó y `completed` en el que terminó. Un `sign 45/0` seguido de un
+  `sign 34/61` es KMS con 45 firmas en vuelo que devuelve al segundo siguiente.
+  Que coincidan no es lo normal — significa que no quedó nada a medio hacer.
+- **Ocho tramos**, con su unidad: `canonical`, `sign` y `encrypt` por
+  **documento**; `outbox` (la transacción), `pipeline` (el loop entero) y
+  `delay` (el retardo artificial de `C3_DELAY_MS`) por **petición**; `wait`
+  (`e4→e5`, lo que la fila esperó en el outbox) por fila y solo en el primer
+  intento; `sqs` (`e5→e6`) por **llamada** a `SendMessageBatch`, que lleva
+  hasta 10 sobres.
+- **La aritmética cuadra en el `total`, no en una fila**:
+  `canonical + sign + encrypt + outbox = pipeline`, y `pipeline + delay` es casi
+  toda la latencia. En una fila suelta no tiene por qué — los tramos de una
+  petición que cruza la frontera del segundo caen repartidos, que es justo lo
+  que `init` vs `completed` enseña. Sobre tráfico real el residuo del total es
+  del 0,0002%.
+- **Los percentiles de un segundo son exactos.** Solo `minutes` y `total` llevan
+  `aproximado: true`. Y `suma_ms`/`avg_ms`/`max_ms` son exactos siempre, incluso
+  cuando el techo de 500 muestras por segundo recorta los percentiles.
+- **Duraciones con reloj monótono**, no restando las marcas `e0..e6`: esas son
+  ISO y en local canonizar tarda 0,05 ms — saldría 0. Las marcas siguen en
+  columnas del outbox, que es lo que permite conciliar con C4.
+- **`pipeline` no es la latencia de la petición**: a la latencia le sobra el
+  parseo, la respuesta y el retardo artificial de `C3_DELAY_MS`. Restarlos dice
+  si 800 ms son de la firma o de una perilla de prueba.
+- **Percentiles exactos dentro del segundo**, aproximados al agregar en minutos
+  y total — y ahí lo declaran con `"aproximado": true`.
+- **El peso sale del cuerpo crudo**, no de re-serializar los documentos: volver
+  a pasarlos por `JSON.stringify` daría un número parecido pero no el que viajó
+  por el cable, y el cable es lo que se está midiendo.
 - **`event_ids_duplicados`** es la señal barata de que el pool del orquestador
   está reenviando plantillas tal cual — el fallo que SQS FIFO se tragaría en
-  silencio.
-- El archivo se reescribe entero en cada ventana, con temporal + `rename`: un
-  fallo a media escritura no puede dejar un JSON truncado.
-- Los `event_id` se comparan contra **toda la prueba**, no solo contra el
-  minuto: un duplicado que cruza la frontera del minuto sigue siendo un
-  duplicado.
-- Una ventana se cierra al terminar el minuto, tras 8 s de silencio, o al
-  apagar el proceso; `completo` y `cerrado_por` dicen cuál fue.
-- `GET /status` da el acumulado por prueba sin abrir archivos.
+  silencio. Se comparan contra **toda la prueba**, no contra el segundo.
+- Se vuelca cada 10 s mientras hay tráfico, y al final tras 8 s de silencio o
+  con SIGTERM. Temporal + `rename`: un fallo a media escritura no puede dejar un
+  JSON truncado.
+- `GET /status` da lo mismo **en vivo**, sin abrir archivos.
 
 Variables: `TENANT_ID` (por defecto `puerto-<PORT>`) y `C3_LOGS_DIR` (por
-defecto `c3/logs`).
+defecto `c3/logs`). Detalle completo en
+[docs/07-medicion.md](docs/07-medicion.md#el-log-de-tiempos--c3logspruebatenantjson).
 
 ## Flujo
 
@@ -185,7 +232,7 @@ paralelo.
 
 ```
 TENANT_ID              identificador del tenant
-DB_HOST                db-NN.poc.local
+DB_HOST                endpoint de su instancia RDS
 DB_SECRET_ARN          credenciales en Secrets Manager
 KMS_SIGN_KEY_ID        Ed25519 en C3
 KMS_HMAC_KEY_ID        pseudonimización de tenant

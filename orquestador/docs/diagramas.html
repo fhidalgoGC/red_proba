@@ -321,7 +321,7 @@
 
             <!-- cuota -->
             <text x="14" y="132" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
-              a · UN ENTERO POR SEGUNDO, dentro del rango
+              a · UN ENTERO POR SEGUNDO — son PETICIONES, no eventos
             </text>
             <text x="14" y="152" fill="currentColor" font-size="11">N = ⌊min + azar × (max − min + 1)⌋</text>
 
@@ -374,12 +374,10 @@
 
             <!-- documento -->
             <text x="14" y="252" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="11">
-              c · Y QUÉ DOCUMENTO, por índice
+              c · CUÁNTOS DOCUMENTOS lleva cada petición, y cuáles
             </text>
-            <text x="14" y="272" fill="currentColor" font-size="11">idx = ⌊azar × 1000⌋ → [ 417, 92, 806, 233, … ]</text>
-            <text x="14" y="290" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
-              un índice pesa 4 bytes; un documento, 2 KB
-            </text>
+            <text x="14" y="272" fill="currentColor" font-size="11">events.client={1,10} → [ 5, 2, 9, 1, 7, … ]  una por petición</text>
+            <text x="14" y="290" fill="currentColor" font-size="11">idx = ⌊azar × 1000⌋ → [ 417, 92, 806, 233, … ]  el documento</text>
           </g>
         </svg>
       </div>
@@ -407,9 +405,9 @@
   <!-- ================================================================ -->
   <section>
     <div class="prosa">
-      <h2>Los cuatro dados</h2>
+      <h2>Los cinco dados</h2>
       <p>
-        Todo lo determinista sale de mulberry32 sembrado. Cuatro flujos
+        Todo lo determinista sale de mulberry32 sembrado. Cinco flujos
         independientes, derivados de la misma semilla por XOR.
       </p>
     </div>
@@ -421,9 +419,10 @@
         </thead>
         <tbody>
           <tr><td class="n">semilla</td><td>ítems, importes, CNPJ, tamaño de cada plantilla</td><td>al arrancar</td></tr>
-          <tr><td class="n">^ 0x85ebca6b</td><td>la cuota de cada segundo</td><td>al planificar</td></tr>
+          <tr><td class="n">^ 0x85ebca6b</td><td>cuántas <b>peticiones</b> lleva cada segundo</td><td>al planificar</td></tr>
           <tr><td class="n">^ 0x9e3779b9</td><td>los instantes dentro del segundo</td><td>al planificar</td></tr>
           <tr><td class="n">^ 0x5f3759df</td><td>qué plantilla le toca a cada evento</td><td>al planificar</td></tr>
+          <tr><td class="n">^ 0xc2b2ae35</td><td>cuántos <b>documentos</b> lleva cada petición</td><td>al planificar</td></tr>
         </tbody>
       </table>
     </div>
@@ -431,8 +430,9 @@
     <div class="prosa">
       <p>
         Separados a propósito: si compartieran uno, cambiar el rango de
-        <code>request</code> desplazaría también la elección de plantillas, y dos
-        corridas con la misma semilla dejarían de ser comparables.
+        <code>events</code> desplazaría también la elección de plantillas, y dos
+        corridas con la misma semilla dejarían de ser comparables — que es justo
+        lo que la semilla existe para garantizar.
       </p>
       <p>
         Dos cosas quedan deliberadamente fuera del PRNG. El <strong>relleno</strong>
@@ -525,6 +525,122 @@
         Comprobado interceptando 29 cuerpos en el cable: <strong>28 plantillas
         distintas y 29 <code>event_id</code> únicos</strong>. El contenido caro
         se reutiliza; la identidad, nunca.
+      </p>
+    </div>
+  </section>
+
+
+  <hr class="sep">
+
+  <!-- ================================================================ -->
+  <section>
+    <div class="prosa">
+      <div class="paso">EL CAMBIO QUE MÁS CONFUNDE</div>
+      <h2><code>request</code> son peticiones, <code>events</code> son documentos</h2>
+      <p>
+        Hasta hace poco <code>request.client</code> contaba <em>eventos</em>.
+        Con lotes de un documento los dos números coincidían y nadie notaba la
+        diferencia — pero en cuanto una petición lleva varios, son cosas
+        distintas y confundirlas hace que el informe conteste la pregunta
+        equivocada.
+      </p>
+      <pre><span class="c">// lo que se pide</span>
+{ <span class="s">"request"</span>: { <span class="s">"client"</span>: { <span class="s">"min"</span>: 100, <span class="s">"max"</span>: 200 } },   <span class="c">← PETICIONES/s</span>
+  <span class="s">"events"</span>:  { <span class="s">"client"</span>: { <span class="s">"min"</span>: 1,   <span class="s">"max"</span>: 10  } } }   <span class="c">← documentos por petición</span>
+
+<span class="c">// lo que sale</span>
+eventos/s = peticiones/s × documentos por petición
+          = ~150         × ~5,5                    = ~825 ev/s</pre>
+      <p>
+        Medido contra un receptor que cuenta las dos cosas:
+        <strong>3.205 peticiones y 17.744 documentos</strong> en 20 s — 160,2
+        req/s a 5,54 documentos cada una, con los tamaños repartidos plano de
+        1 a 10.
+      </p>
+    </div>
+
+    <figure>
+      <div class="lienzo">
+        <svg viewBox="0 0 900 250" role="img" width="900" style="min-width:680px"
+             aria-label="El informe separa el nivel petición del nivel evento: la latencia va con las peticiones, los bytes con los documentos">
+          <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+
+            <!-- antes -->
+            <text x="14" y="24" fill="var(--alarma)" font-family="ui-sans-serif,system-ui"
+                  font-size="11" font-weight="600">ANTES · dos unidades en el mismo objeto, sin decirlo</text>
+            <rect x="14" y="34" width="390" height="58" rx="3" fill="none" stroke="var(--alarma)" stroke-width="1.4"/>
+            <text x="26" y="56" fill="currentColor">"target_per_s": 37,          ← PETICIONES</text>
+            <text x="26" y="76" fill="currentColor">"sent": { "count": 110 }     ← EVENTOS</text>
+            <text x="14" y="110" fill="var(--alarma)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              37 al lado de 110 parecía un exceso del 197%. Era otra cosa medida.
+            </text>
+
+            <!-- ahora -->
+            <text x="14" y="146" fill="var(--det)" font-family="ui-sans-serif,system-ui"
+                  font-size="11" font-weight="600">AHORA · un bloque por nivel</text>
+
+            <rect x="14" y="156" width="420" height="84" rx="3" fill="var(--det-soft)" stroke="var(--det)" stroke-width="1.5"/>
+            <text x="26" y="176" fill="var(--det)" font-weight="600">request</text>
+            <text x="26" y="194" fill="currentColor" font-size="10.5">target_per_s 33 · sent 33 · completed 45</text>
+            <text x="26" y="211" fill="currentColor" font-size="10.5">ok · not_ok · failed · dropped_*</text>
+            <text x="26" y="230" fill="var(--ident)" font-size="10.5">latencia p50/p99/max/avg · samples</text>
+
+            <rect x="454" y="156" width="420" height="84" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="466" y="176" fill="currentColor" font-weight="600">events</text>
+            <text x="466" y="194" fill="currentColor" font-size="10.5">sent 114 · completed 147 · per_request 3.45</text>
+            <text x="466" y="211" fill="currentColor" font-size="10.5">ok · not_ok · failed · dropped_*</text>
+            <text x="466" y="230" fill="var(--ident)" font-size="10.5">weight · weight_completed</text>
+
+            <!-- el criterio -->
+            <text x="454" y="110" fill="currentColor" font-family="ui-sans-serif,system-ui" font-size="10.5" font-weight="600">
+              El reparto no es arbitrario:
+            </text>
+            <text x="454" y="128" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              la LATENCIA va con las peticiones — una respuesta es una petición,
+            </text>
+            <text x="454" y="60" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              lleve un documento o veinte. Medir latencia "por evento"
+            </text>
+            <text x="454" y="78" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              no significa nada: no hay una respuesta por documento.
+            </text>
+            <text x="454" y="42" fill="var(--ink-3)" font-family="ui-sans-serif,system-ui" font-size="10.5">
+              Los BYTES van con los eventos: el peso es de los documentos.
+            </text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Sin los dos niveles no se puede decir si el destino se satura <strong>por
+        petición</strong> (concurrencia HTTP) o <strong>por evento</strong> (la
+        firma de KMS). Son cuellos distintos y se arreglan de forma distinta.
+      </figcaption>
+    </figure>
+
+    <div class="nota">
+      <b>Y el buffer desapareció.</b> Antes los eventos se acumulaban hasta
+      juntar <code>eventos_por_request</code> y se soltaban. El problema no era
+      el rendimiento: era que <strong>el instante de salida dependía del ritmo de
+      llegada</strong>. Un tenant de la cola larga de Zipf tardaba segundos en
+      juntar su lote, y esa espera se medía como latencia del sistema cuando era
+      latencia del arnés. Ahora cada petición tiene su instante <em>y</em> su
+      tamaño decididos en el plan, antes de que arranque la corrida.
+    </div>
+
+    <div class="prosa">
+      <h3 style="font-size:1.05rem">Las ventanas del informe</h3>
+      <p>
+        <code>seconds</code> siempre; <code>minutes</code> solo con más de 60
+        segundos; <code>hours</code> solo con más de 60 minutos. Una corrida de
+        20 s no trae un array <code>minutes</code> de un elemento idéntico al
+        total: sería ruido que hay que leer entero para descubrir que no dice
+        nada. El orden es <code>total · seconds · minutes · hours</code>.
+      </p>
+      <p>
+        En el <code>total</code> faltan <code>target_per_s</code> y
+        <code>samples</code>, a propósito: el objetivo agregado no significa
+        nada —cada segundo tuvo el suyo— y <code>samples</code> ahí siempre
+        coincide con <code>completed</code>.
       </p>
     </div>
   </section>

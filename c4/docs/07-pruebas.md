@@ -30,7 +30,7 @@ descifrado.
 ## Los seis venenos
 
 El punta a punta publica 12 documentos legítimos (3 expedientes × 4 eventos,
-tamaños sorteados en `[1536, 3072]`) y **6 venenos, uno por cada guarda**:
+tamaños sorteados en `[2048, 4096]`) y **6 venenos, uno por cada guarda**:
 
 | Veneno | Motivo esperado | Qué guarda ataca |
 |---|---|---|
@@ -38,7 +38,7 @@ tamaños sorteados en `[1536, 3072]`) y **6 venenos, uno por cada guarda**:
 | ciphertext alterado | `no_descifra` | El tag de GCM |
 | descifra pero la firma no cubre el documento | `firma_invalida` | **El caso grave: inyección con la llave de cifrado** |
 | `key_id` fuera de la lista blanca | `llave_no_aceptada` | Firmado con otra llave |
-| `payload_hash` declarado ≠ recalculado | `dedup_no_coincide` | Idempotencia, o deriva del JCS |
+| `payload_hash` declarado ≠ recalculado | `payload_hash_no_coincide` | Idempotencia, o deriva del JCS |
 | `rpf_id` que no es UUID | `rpf_id_invalido` | Reintento infinito por dato inválido |
 
 > **Que el total cuadre no basta.** Se comprueba que cada uno cayó **por su
@@ -129,6 +129,19 @@ pero nunca la consume.
      5 · no_descifra
      5 · firma_invalida
      5 · llave_no_aceptada
-     5 · dedup_no_coincide
+     5 · payload_hash_no_coincide
      5 · rpf_id_invalido
 ```
+
+## El health se prueba en falso, a propósito
+
+`test/salud.test.ts` levanta el endpoint con una base **de mentira** que
+contesta lo que el test le diga. Lo que se afirma no es que devuelva 200 —eso lo
+haría cualquier servidor— sino que `ok` **sigue a la base**: con la base
+respondiendo `false`, el health dice `ok:false`, y cada llamada consulta de
+verdad en vez de devolver un valor fijo. Contra un Postgres real ese caso no se
+puede provocar sin tirar el contenedor.
+
+También fija dos cosas que no son de configuración: que `puede_firmar` es
+siempre `false` (regla 7) y que cualquier ruta que no sea `/health` o `/status`
+es un 404 — C4 no es un API.

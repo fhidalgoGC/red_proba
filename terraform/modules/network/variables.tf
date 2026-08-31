@@ -1,6 +1,6 @@
 variable "name_prefix" { type = string }
 
-variable "cidr_orq" { type = string }
+# Solo dos VPC: C3 -donde tambien corre el orquestador- y C4.
 variable "cidr_c3" { type = string }
 variable "cidr_c4" { type = string }
 
@@ -16,7 +16,7 @@ variable "az_count" {
 
 variable "namespace" {
   type        = string
-  description = "Zona privada de Cloud Map. api-NN.<namespace>, db-NN.<namespace>."
+  description = "Zona privada de Cloud Map en la VPC de C3. api-NN.<namespace>."
   default     = "poc.local"
 }
 
@@ -25,8 +25,9 @@ variable "endpoints_activos" {
   description = <<-D
     ⚠ LOS INTERFACE ENDPOINTS FACTURAN AUNQUE NO CORRA NADA.
     Cobran ~$0,01 por hora POR ENI, y hay una ENI por AZ por endpoint.
-    Con 15 endpoints y 2 AZ son 30 ENIs = ~$0,30/h = ~$7,20/dia — casi
-    3x el baseline mensual de la cuenta, por dia, con cero computo.
+    Con 12 endpoints y 2 AZ son 24 ENIs = ~$0,24/h = ~$5,76/dia — con
+    cero computo. (Eran 15 cuando ORQ tenia VPC propia; al mudarse a la de
+    C3 reutiliza ecr+logs de C3 y se ahorran 3.)
 
     Por eso siguen a desired_count: apagar la PoC apaga tambien los
     endpoints, y el costo de estar apagado cae a ~$0.

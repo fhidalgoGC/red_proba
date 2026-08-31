@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS ${e}.outbox (
   last_error_code TEXT,
   last_error      TEXT,
 
+  -- ── C-09 · la corrida ──
+  -- El x-prueba-id de la peticion que escribio la fila. Es METADATO de
+  -- medicion, igual que las marcas de abajo, y por la misma razon vive en una
+  -- columna y no dentro del payload (regla 8).
+  --
+  -- Sin ella el relay no sabria a que prueba pertenece lo que publica: corre en
+  -- su propio timer, fuera de cualquier request, asi que los tramos e4->e5 y
+  -- e5->e6 acabarian todos en 'sin-id' mientras el resto del informe lleva el
+  -- id de verdad.
+  prueba          TEXT,
+
   -- ── C-09 · marcas de medicion ──
   -- En COLUMNAS y nunca dentro del payload (regla 8): el payload va firmado,
   -- y meterle metadatos de medicion cambiaria lo que se firma.
@@ -88,5 +99,13 @@ CREATE INDEX IF NOT EXISTS outbox_payload_hash ON ${e}.outbox (payload_hash);
 CREATE INDEX IF NOT EXISTS outbox_enviados
   ON ${e}.outbox (sent_at)
   WHERE status = 'SENT';
+
+-- ── Columnas añadidas despues ──────────────────────────────────────────
+--
+-- CREATE TABLE IF NOT EXISTS no toca una tabla que ya existe, asi que una
+-- base creada antes de C-09 se quedaria sin la columna 'prueba' y el INSERT
+-- del outbox fallaria con "column does not exist" en el primer evento de la
+-- corrida. El ALTER es idempotente y cuesta un catalogo: se ejecuta siempre.
+ALTER TABLE ${e}.outbox ADD COLUMN IF NOT EXISTS prueba TEXT;
 `;
 }

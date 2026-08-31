@@ -101,9 +101,10 @@ pero lo apartaba del protocolo RPF, que especifica HMAC-SHA256 sin más. Y los
 32 bytes extra caben de sobra: son un 1% de un documento de 3 KB, y el
 `padding` los absorbe sin que el total se mueva.
 
-Lo único que subió es el **piso**: el documento más chico posible pasó de 1.403
-a **1.433 bytes**, porque ahí ya no queda relleno de dónde recortar. El rango
-del perfil (`[1536, 3072]`) sigue holgado.
+Lo único que subió es el **piso**: con los 70 atributos hoja del documento, el
+más chico posible son **2.024 bytes** con un solo ítem, porque ahí ya no queda
+relleno de dónde recortar. El rango del perfil (`[2048, 4096]`) entra con 16
+bytes de margen sobre ese piso.
 
 ---
 
