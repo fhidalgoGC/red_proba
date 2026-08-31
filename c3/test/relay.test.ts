@@ -24,7 +24,10 @@ import { RelayService } from '../src/relay/relay.service';
 import type { PublicadorService, ResultadoEnvio } from '../src/relay/publicador.service';
 
 const ESQUEMA = 'c3_relay_test';
-const BD = process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4';
+// ⚠ Base PROPIA de C3, no la de C4. Son dominios sin ruta de red entre ellos
+// (D-03); si los tests compartieran base, cualquiera podria escribir una
+// conciliacion con JOIN que pasaria aqui y seria imposible en produccion.
+const BD = process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c3_test';
 
 let bd: BdService;
 let outbox: OutboxRepository;

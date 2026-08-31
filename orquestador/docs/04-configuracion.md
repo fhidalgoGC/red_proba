@@ -53,7 +53,10 @@ llegadas:
   tick_ms: 10
 
 peticiones:
-  client: { min: 20, max: 80 }   # opcional; equivale a request.client del POST
+  client: { min: 20, max: 80 }   # PETICIONES/s por cliente; = request.client del POST
+
+eventos:
+  client: [1, 10]                # documentos dentro de cada peticion; = events.client
 
 pool:
   plantillas: 1000
@@ -86,7 +89,7 @@ eso es peor que no arrancar.
 | `pool.eventos_por_hilo` | Cuántos eventos comparten `rpf_id` = `MessageGroupId`. Con 1, paralelismo máximo; con 50, orden estricto y te acercas al techo de 300 msg/s. **Es la perilla que ejercita D-06** |
 | `pool.tamano_bytes` | Rango del tamaño canónico. **Piso duro 1.411** — ver [01-como-funciona](01-como-funciona.md) |
 | `pool.tasa_verificacion` | Fracción de eventos a los que se comprueba el tamaño. 1.0 es correcto pero caro; 0 solo verifica al construir el pool |
-| `envio.eventos_por_request` | Con 1, cada evento es una petición. Súbelo si a ritmo alto aparece `dropped_lag` |
+| `envio.eventos_por_request` | Tamaño **fijo** del lote. Es el atajo de `eventos.client: [N, N]`; si pones `eventos.client`, este se ignora |
 | `envio.conexiones_por_destino` | **Techo duro de ritmo**: `conexiones / latencia` req/s |
 | `envio.concurrencia_por_tenant` | **0 = sin tope, y es lo correcto.** Ver [05-reglas](05-reglas.md) |
 | `envio.reintentos` | Debe ser 0: un reintento cuenta el mismo evento dos veces como carga ofrecida |

@@ -58,6 +58,16 @@ const ASIENTO_MS = 2_000;
  * `presentar()`. El numero crudo se calcula, se suma y se descarta.
  */
 interface Metricas {
+  // ── nivel PETICION ──
+  req_sent: number;
+  req_completed: number;
+  req_ok: number;
+  req_not_ok: number;
+  req_failed: number;
+  req_dropped_lag: number;
+  req_dropped_saturation: number;
+
+  // ── nivel EVENTO ──
   sent: number;
   weight_sent: number;
   completed: number;
@@ -101,52 +111,112 @@ interface Metricas {
  * en que bloque cayo.
  */
 export interface MetricasSalida {
-  /** El lado del ENVIO: lo que salio, y lo que el reloj pidio y no salio. */
-  sent: {
-    count: number;
-    weight: string;
-    /** Se programo pero el segundo cambio antes de dispararlo. Culpa: el arnes. */
+  /**
+   * Nivel PETICION HTTP.
+   *
+   * Aqui viven la latencia y los codigos: una respuesta es UNA peticion, lleve
+   * un documento o veinte. Medir latencia "por evento" no significa nada — no
+   * hay una respuesta por documento.
+   */
+  request: {
+    /**
+     * Peticiones/s que el planificador sorteo para esta ventana.
+     *
+     * Solo en `seconds`. Un objetivo agregado no significa nada: cada segundo
+     * tuvo el suyo, sorteado dentro del rango, y promediarlos daria un numero
+     * que ningun segundo persiguio.
+     */
+    target_per_s?: number | null;
+    /** Salieron al cable. */
+    sent: number;
+    /** El destino respondio, con el codigo que sea. */
+    completed: number;
+    /** Desglose de `completed`. */
+    ok: number;
+    not_ok: number;
+    /** Salio pero NO volvio: timeout o red. No cuenta como completed. */
+    failed: number;
+    /** Se programo pero el segundo cambio antes de dispararla. Culpa: el arnes. */
     dropped_lag: number;
     /** El tope de peticiones en vuelo estaba lleno. Solo si se puso tope. */
     dropped_saturation: number;
-  };
-  /** El lado de la RESPUESTA: lo que volvio, como volvio y cuanto tardo. */
-  completed: {
-    count: number;
-    weight: string;
-    /** Desglose de `count` por codigo. */
-    ok: number;
-    not_ok: number;
-    /** Salio pero NO volvio: timeout o red. No cuenta como completado. */
-    failed: number;
     latency_p50_ms: number | null;
     latency_p99_ms: number | null;
     latency_max_ms: number | null;
     latency_avg_ms: number | null;
-    /** Muestras de latencia: son los completados, no los enviados. */
-    samples: number;
+    /**
+     * Muestras de latencia. Una por respuesta.
+     *
+     * Solo en las VENTANAS (seconds/minutes/hours), y solo importa cuando es
+     * MENOR que `completed`: significa que se alcanzo el techo de muestras por
+     * segundo y los percentiles salen de una muestra, no de todo. En el
+     * `total` se omite porque ahi siempre coincide con `completed` y repetir
+     * el mismo numero con otro nombre invita a creer que son cosas distintas.
+     */
+    samples?: number;
+  };
+
+  /**
+   * Nivel EVENTO — los documentos que iban dentro de esas peticiones.
+   *
+   * Aqui viven los bytes: el peso es de los documentos, no del sobre HTTP.
+   * Con `events.client`, un segundo puede tener pocas peticiones y muchos
+   * eventos, o al reves; separar los dos niveles es lo que permite decir si el
+   * destino se satura por peticion (concurrencia HTTP) o por evento (la firma
+   * de KMS).
+   */
+  events: {
+    sent: number;
+    weight: string;
+    completed: number;
+    weight_completed: string;
+    ok: number;
+    not_ok: number;
+    failed: number;
+    dropped_lag: number;
+    dropped_saturation: number;
+    /** Media de documentos por peticion en esta ventana. */
+    per_request: number | null;
   };
 }
 
-function presentar(m: Metricas): MetricasSalida {
+/**
+ * @param objetivo peticiones/s que se persiguieron. Solo lo traen los segundos.
+ * @param esTotal  en el total se omiten `target_per_s` y `samples`.
+ */
+function presentar(m: Metricas, objetivo: number | null = null, esTotal = false): MetricasSalida {
+  // El orden de las claves ES el orden del JSON. `target_per_s` va PRIMERO,
+  // pegado al `sent` con el que se compara: son la misma unidad y leerlos
+  // juntos es todo el punto de haberlos separado de los eventos.
+  const request: MetricasSalida['request'] = {
+    ...(esTotal || objetivo === null ? {} : { target_per_s: objetivo }),
+    sent: m.req_sent,
+    completed: m.req_completed,
+    ok: m.req_ok,
+    not_ok: m.req_not_ok,
+    failed: m.req_failed,
+    dropped_lag: m.req_dropped_lag,
+    dropped_saturation: m.req_dropped_saturation,
+    latency_p50_ms: m.latency_p50_ms,
+    latency_p99_ms: m.latency_p99_ms,
+    latency_max_ms: m.latency_max_ms,
+    latency_avg_ms: m.latency_avg_ms,
+  };
+  if (!esTotal) request.samples = m.latency_samples;
+
   return {
-    sent: {
-      count: m.sent,
+    request,
+    events: {
+      sent: m.sent,
       weight: legible(m.weight_sent),
-      dropped_lag: m.dropped_lag,
-      dropped_saturation: m.dropped_saturation,
-    },
-    completed: {
-      count: m.completed,
-      weight: legible(m.weight_completed),
+      completed: m.completed,
+      weight_completed: legible(m.weight_completed),
       ok: m.ok,
       not_ok: m.not_ok,
       failed: m.failed,
-      latency_p50_ms: m.latency_p50_ms,
-      latency_p99_ms: m.latency_p99_ms,
-      latency_max_ms: m.latency_max_ms,
-      latency_avg_ms: m.latency_avg_ms,
-      samples: m.latency_samples,
+      dropped_lag: m.dropped_lag,
+      dropped_saturation: m.dropped_saturation,
+      per_request: m.req_sent === 0 ? null : +(m.sent / m.req_sent).toFixed(2),
     },
   };
 }
@@ -154,13 +224,23 @@ function presentar(m: Metricas): MetricasSalida {
 interface Segundo {
   seg: number;
   at: string;
-  /** El ritmo que el planificador sorteo para este segundo, en ev/s. */
-  target_per_s: number | null;
+  // ⚠ `target_per_s` ya NO vive aqui: se mudo a `metrics.request`, que es
+  // donde tiene sentido. El planificador sortea PETICIONES por segundo, asi
+  // que tenerlo al lado de un `sent` que contaba eventos hacia que el objetivo
+  // y lo conseguido parecieran comparables cuando estaban en unidades
+  // distintas — 37 al lado de 110 no era un exceso, era otra cosa medida.
   metrics: MetricasSalida;
 }
 
 interface Minuto {
   min: number;
+  at: string;
+  complete: boolean;
+  metrics: MetricasSalida;
+}
+
+interface Hora {
+  hour: number;
   at: string;
   complete: boolean;
   metrics: MetricasSalida;
@@ -177,10 +257,26 @@ interface Minuto {
  * discrepar y no habria manera de saber cual miente. Asi, si `total` no cuadra
  * con `seconds`, el error esta en la agregacion y no en la medicion.
  */
+/**
+ * La ficha de un tenant. El orden del JSON es el de la lectura: primero el
+ * total, luego el detalle de grueso a fino... al reves, de fino a grueso.
+ *
+ *   total · seconds · minutes · hours
+ *
+ * ⚠ LAS VENTANAS GRANDES SOLO APARECEN SI HAY ALGO QUE AGRUPAR. `minutes` en
+ * una corrida de 20 s seria un array de un elemento identico al total, y
+ * `hours` en una de 5 minutos, lo mismo: ruido que hay que leer para descubrir
+ * que no dice nada. Por eso:
+ *
+ *   seconds   siempre
+ *   minutes   solo con mas de 60 segundos
+ *   hours     solo con mas de 60 minutos
+ */
 interface FichaTenant {
   total: MetricasSalida;
-  minutes: Minuto[];
   seconds: Segundo[];
+  minutes?: Minuto[];
+  hours?: Hora[];
   /** Presente solo si el batch supero el techo de segundos grabados. */
   seconds_truncated?: boolean;
 }
@@ -312,42 +408,55 @@ export class RegistroService implements OnModuleInit, OnApplicationShutdown {
       const seconds: Segundo[] = crudos.map((s) => ({
         seg: s.epoch - base + 1,          // 1-based desde el arranque del batch
         at: new Date(s.epoch * 1000).toISOString(),
-        target_per_s: s.objetivo,
-        metrics: presentar(aMetricas(s)),
+        metrics: presentar(aMetricas(s), s.objetivo),
       }));
 
-      // Los minutos se agregan DESDE los segundos: una sola fuente de verdad.
-      // Contarlos por separado permitiria que las dos vistas discreparan, y no
+      // Cada nivel se agrega DESDE EL ANTERIOR: una sola fuente de verdad.
+      // Contarlos por separado permitiria que dos vistas discreparan, y no
       // habria manera de saber cual miente.
-      const porMinuto = new Map<number, Metricas[]>();
-      for (const s of crudos) {
-        const m = Math.floor(s.epoch / 60);
-        porMinuto.set(m, [...(porMinuto.get(m) ?? []), aMetricas(s)]);
-      }
+      //
+      //   seconds -> minutes -> hours -> total
+      //
+      // Y cada nivel solo existe si hay MAS DE 60 del anterior: agrupar 20
+      // segundos en un unico "minuto" da una fila identica al total, que hay
+      // que leer entera para descubrir que no aporta nada.
+      const hayMinutos = crudos.length > 60;
 
-      const minutos: Array<{ min: number; at: string; complete: boolean; metrics: Metricas }> =
-        [...porMinuto.entries()]
-        .sort((x, y) => x[0] - y[0])
-        .map(([m, lista], i) => ({
-          min: i + 1,
-          at: new Date(m * 60_000).toISOString(),
-          complete: m < minutoActual,
-          metrics: sumar(lista),
-        }));
+      const minutos = hayMinutos ? agrupar(crudos, 60, base) : [];
+      const hayHoras = minutos.length > 60;
+      const horas = hayHoras ? agrupar(crudos, 3600, base) : [];
 
-      const minutes: Minuto[] = minutos.map((m) => ({ ...m, metrics: presentar(m.metrics) }));
+      const minutes: Minuto[] = minutos.map((m, i) => ({
+        min: i + 1,
+        at: m.at,
+        complete: m.completa,
+        metrics: presentar(m.metrics),
+      }));
+      const hours: Hora[] = horas.map((h, i) => ({
+        hour: i + 1,
+        at: h.at,
+        complete: h.completa,
+        metrics: presentar(h.metrics),
+      }));
 
-      // El total sale de los MINUTOS, no de los segundos: es el ultimo
-      // eslabon de la cadena seconds -> minutes -> total. Da lo mismo que
-      // sumar los segundos, y precisamente por eso sirve de comprobacion.
-      const totalInterno = sumar(minutos.map((x) => x.metrics));
+      // El total sale del nivel MAS ALTO que exista: es el ultimo eslabon de
+      // la cadena. Da lo mismo que sumar los segundos, y precisamente por eso
+      // sirve de comprobacion cruzada.
+      const fuenteTotal = horas.length > 0 ? horas : minutos.length > 0 ? minutos : null;
+      const totalInterno = fuenteTotal
+        ? sumar(fuenteTotal.map((x) => x.metrics))
+        : sumar(crudos.map(aMetricas));
       totalesInternos.push(totalInterno);
 
+      // El orden de las claves ES el orden del JSON. Total primero: es lo que
+      // se mira, y el detalle esta debajo por si hace falta.
       const ficha: FichaTenant = {
-        total: presentar(totalInterno),
-        minutes,
+        total: presentar(totalInterno, null, true),
         seconds,
       };
+      if (hayMinutos) ficha.minutes = minutes;
+      if (hayHoras) ficha.hours = hours;
+
       if (truncados.has(t.id)) ficha.seconds_truncated = true;
       tenants[t.id] = ficha;
     }
@@ -375,8 +484,25 @@ export class RegistroService implements OnModuleInit, OnApplicationShutdown {
       },
 
       resumen: {
-        /** Lo que el reloj pidio. offered = sent + dropped_lag + dropped_saturation. */
+        /** Lo que el reloj pidio, en EVENTOS. offered = sent + dropped_lag + dropped_saturation. */
         offered: a.ofrecidos,
+
+        /**
+         * Lo mismo contado en PETICIONES HTTP.
+         *
+         * `request.client` fija estas; `events.client`, cuantos documentos
+         * lleva cada una. Sin los dos numeros no se puede decir si el destino
+         * se satura por peticion o por evento — y son cuellos distintos: uno
+         * es la concurrencia HTTP, el otro la firma.
+         */
+        requests: {
+          offered: a.peticionesOfrecidas,
+          sent: a.peticionesEnviadas,
+          completed: a.peticionesCompletadas,
+          per_s: inst.transcurrido_s === 0 ? null : +(a.peticionesEnviadas / inst.transcurrido_s).toFixed(1),
+          eventos_por_request:
+            a.peticionesEnviadas === 0 ? null : +(a.enviados / a.peticionesEnviadas).toFixed(2),
+        },
 
         sent: {
           count: a.enviados,
@@ -476,15 +602,54 @@ export class RegistroService implements OnModuleInit, OnApplicationShutdown {
 // ---------------------------------------------------------------------------
 
 interface Crudo {
+  /** Segundo absoluto. Es lo que permite agrupar en minutos y horas. */
+  epoch: number;
   enviados: number; bytesEnviados: number;
   completados: number; bytesCompletados: number;
   aceptados: number; rechazados: number; fallidos: number;
   descartadosSaturacion: number; descartadosRetraso: number;
+  peticionesEnviadas: number; peticionesCompletadas: number;
+  peticionesAceptadas: number; peticionesRechazadas: number; peticionesFallidas: number;
+  peticionesDescartadasSaturacion: number; peticionesDescartadasRetraso: number;
   lat?: ResumenLatencia;
+}
+
+/**
+ * Agrupa los segundos crudos en ventanas de `tamanoSeg`.
+ *
+ * `completa` dice si la ventana ya termino en el reloj: la ultima de una
+ * corrida en curso casi nunca lo esta, y presentarla al lado de las demas sin
+ * avisar haria parecer que el ritmo se hundio al final.
+ */
+function agrupar(
+  crudos: Crudo[],
+  tamanoSeg: number,
+  _base: number,
+): Array<{ at: string; completa: boolean; metrics: Metricas }> {
+  const ahora = Math.floor(Date.now() / 1000);
+  const cubos = new Map<number, Metricas[]>();
+  for (const s of crudos) {
+    const k = Math.floor(s.epoch / tamanoSeg);
+    cubos.set(k, [...(cubos.get(k) ?? []), aMetricas(s)]);
+  }
+  return [...cubos.entries()]
+    .sort((x, y) => x[0] - y[0])
+    .map(([k, lista]) => ({
+      at: new Date(k * tamanoSeg * 1000).toISOString(),
+      completa: (k + 1) * tamanoSeg <= ahora,
+      metrics: sumar(lista),
+    }));
 }
 
 function aMetricas(s: Crudo): Metricas {
   return {
+    req_sent: s.peticionesEnviadas,
+    req_completed: s.peticionesCompletadas,
+    req_ok: s.peticionesAceptadas,
+    req_not_ok: s.peticionesRechazadas,
+    req_failed: s.peticionesFallidas,
+    req_dropped_lag: s.peticionesDescartadasRetraso,
+    req_dropped_saturation: s.peticionesDescartadasSaturacion,
     sent: s.enviados,
     weight_sent: s.bytesEnviados,
     completed: s.completados,
@@ -504,6 +669,8 @@ function aMetricas(s: Crudo): Metricas {
 
 function sumar(lista: Metricas[]): Metricas {
   const t: Metricas = {
+    req_sent: 0, req_completed: 0, req_ok: 0, req_not_ok: 0, req_failed: 0,
+    req_dropped_lag: 0, req_dropped_saturation: 0,
     sent: 0, weight_sent: 0,
     completed: 0, weight_completed: 0,
     ok: 0, not_ok: 0, failed: 0,
@@ -515,6 +682,10 @@ function sumar(lista: Metricas[]): Metricas {
   let sumaP50 = 0, sumaP99 = 0, sumaAvg = 0, n = 0, max: number | null = null;
 
   for (const m of lista) {
+    t.req_sent += m.req_sent; t.req_completed += m.req_completed;
+    t.req_ok += m.req_ok; t.req_not_ok += m.req_not_ok; t.req_failed += m.req_failed;
+    t.req_dropped_lag += m.req_dropped_lag;
+    t.req_dropped_saturation += m.req_dropped_saturation;
     t.sent += m.sent; t.weight_sent += m.weight_sent;
     t.completed += m.completed; t.weight_completed += m.weight_completed;
     t.ok += m.ok; t.not_ok += m.not_ok; t.failed += m.failed;

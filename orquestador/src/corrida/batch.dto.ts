@@ -11,10 +11,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  */
 
 export class RangoDto {
-  @ApiProperty({ example: 20, description: 'Minimo de eventos por segundo.' })
+  @ApiProperty({ example: 20, description: 'Minimo, inclusive.' })
   min!: number;
 
-  @ApiProperty({ example: 60, description: 'Maximo de eventos por segundo.' })
+  @ApiProperty({ example: 60, description: 'Maximo, inclusive.' })
   max!: number;
 }
 
@@ -22,9 +22,23 @@ export class RequestDto {
   @ApiPropertyOptional({
     type: RangoDto,
     description:
-      'Rango por cliente y por segundo. Cada segundo se sortea un ritmo nuevo ' +
-      'dentro del rango, asi la carga varia en vez de ser plana.',
+      'PETICIONES HTTP por cliente y por segundo. Cada segundo se sortea un ' +
+      'numero nuevo dentro del rango, asi la carga varia en vez de ser plana.\n\n' +
+      '⚠ Cuenta PETICIONES, no eventos. Cuantos documentos lleva cada una lo ' +
+      'decide `events`. eventos/s = peticiones/s x documentos por peticion.',
     example: { min: 20, max: 60 },
+  })
+  client?: RangoDto;
+}
+
+export class EventsDto {
+  @ApiPropertyOptional({
+    type: RangoDto,
+    description:
+      'DOCUMENTOS dentro de cada peticion. Se sortea uno POR PETICION, no uno ' +
+      'por segundo: dos peticiones del mismo segundo pueden llevar 3 y 9.\n\n' +
+      'Si se omite, el tamaño es fijo y lo fija `perRequest` (por defecto 1).',
+    example: { min: 1, max: 10 },
   })
   client?: RangoDto;
 }
@@ -69,18 +83,24 @@ export class LanzarBatchDto {
   rate?: number;
 
   @ApiPropertyOptional({
-    example: 2500,
     description:
-      'Total de eventos a repartir en la ventana, con un numero aleatorio de ' +
-      'llamadas por tenant. Excluyente con rate y request.',
+      'DOS SIGNIFICADOS, segun la forma:\n\n' +
+      '• `2500` (numero) — TOTAL de eventos a repartir en la ventana, con un ' +
+      'numero aleatorio de llamadas por tenant. Excluyente con `rate` y `request`.\n\n' +
+      '• `{ "client": { "min": 1, "max": 10 } }` (objeto) — DOCUMENTOS POR ' +
+      'PETICION. COMPLEMENTA a `request` en vez de excluirlo: uno fija cuantas ' +
+      'peticiones salen y el otro cuanto lleva cada una.',
+    oneOf: [{ type: 'number', example: 2500 }, { $ref: '#/components/schemas/EventsDto' }],
+    example: { client: { min: 1, max: 10 } },
   })
-  events?: number;
+  events?: number | EventsDto;
 
   @ApiPropertyOptional({
     example: 1,
     description:
-      'Eventos por request HTTP. Con 1, cuando a un cliente le tocan 20 eventos ' +
-      'salen 20 requests concurrentes.',
+      'Tamaño FIJO del lote, en documentos por peticion. Es el atajo para ' +
+      '`events: { client: { min: N, max: N } }`; si mandas `events` como objeto, ' +
+      'este se ignora.',
   })
   perRequest?: number;
 

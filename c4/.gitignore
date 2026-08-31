@@ -2,3 +2,6 @@
 dist-test/
 dist/
 node_modules/
+
+# credenciales locales; .env.ejemplo es la plantilla
+.env

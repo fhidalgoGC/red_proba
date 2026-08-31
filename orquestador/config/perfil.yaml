@@ -56,6 +56,20 @@ llegadas:
   tick_ms: 10
 
 # ---------------------------------------------------------------------------
+# Cuantos DOCUMENTOS lleva cada peticion
+#
+# Se sortea uno POR PETICION, no uno por segundo: dos peticiones del mismo
+# segundo pueden llevar 3 y 9 documentos. Un tamaño de lote fijo es trafico de
+# laboratorio; en produccion los lotes varian.
+#
+#   eventos/s = peticiones/s (request.client) x documentos por peticion
+#
+# Si se omite, el tamaño es FIJO y lo fija `envio.eventos_por_request`.
+# ---------------------------------------------------------------------------
+# eventos:
+#   client: [1, 10]
+
+# ---------------------------------------------------------------------------
 # Pool de payloads pre-generados
 # ---------------------------------------------------------------------------
 pool:
@@ -113,9 +127,15 @@ envio:
   #         ritmo alto el propio orquestador empieza a acusar
   #         descartados_retraso.
   eventos_por_request: 1
-  # Cuanto espera como maximo un lote parcial antes de salir igual. Sin esto,
-  # un tenant de la cola larga con ritmo bajo esperaria minutos a llenar su
-  # lote y le meterias latencia artificial a la medicion.
+  # ⚠ OBSOLETA desde que el tamaño del lote lo decide el PLAN.
+  #
+  # Existia porque los eventos se acumulaban en un buffer hasta juntar
+  # `eventos_por_request`, y un tenant lento tardaba segundos en llenarlo: esto
+  # lo soltaba a medias para no meterle latencia de arnes a la medicion.
+  #
+  # Ya no hay buffer. Cada peticion tiene su instante y su tamaño decididos
+  # antes de que arranque la corrida, asi que no hay lotes parciales que
+  # esperen. Se deja para no romper perfiles que la traigan; no se usa.
   espera_maxima_lote_ms: 200
   # Tope de requests en vuelo por tenant. Es una valvula de seguridad, no un
   # regulador: si se satura, ESO ES LA SEÑAL (el tenant no da abasto) y se

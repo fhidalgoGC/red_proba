@@ -40,9 +40,6 @@ interface EstadoTenant {
   activo: number;
   /** Cuantos eventos del segundo activo ya salieron. */
   disparado: number;
-  buffer: Documento[];
-  bufferBytes: number;
-  bufferDesde: number;
   /** modo smoke: llamadas pre-programadas (offset ms desde el inicio, tamaño). */
   llamadas: Array<{ offsetMs: number; eventos: number }>;
   siguienteLlamada: number;
@@ -56,23 +53,44 @@ interface EstadoTenant {
  * lo que pesan 25 millones de enteros.
  */
 interface EventoPlan {
-  /** Instante absoluto en ms. */
-  ms: number;
+  // El instante ya no vive aqui: es de la PETICION que lo lleva, porque son
+  // las peticiones las que salen al cable, no los eventos sueltos.
   plantilla: number;
   rpfId: string;
   sequence: number;
 }
 
-/** El plan de un segundo: su cuota, sus instantes y, cuando toca, sus cuerpos. */
+/**
+ * Una PETICION planificada: cuando sale y que documentos lleva.
+ *
+ * El tamaño se decide AQUI, en el plan, y no en un buffer que se llena. Con
+ * buffer, el instante en que una peticion salia dependia de lo rapido que
+ * llegaran los eventos: un tenant de la cola larga de Zipf tardaba segundos en
+ * juntar su lote y eso era latencia del ARNES contada como latencia del
+ * sistema. Con el tamaño en el plan, cada peticion tiene su instante exacto.
+ */
+interface PeticionPlan {
+  /** Instante de salida, en ms absolutos. */
+  ms: number;
+  /** Los documentos que lleva. Su numero sale de `eventos.client`. */
+  eventos: EventoPlan[];
+  /** Los cuerpos ya construidos. null mientras no se ha materializado. */
+  docs: DocumentoListo[] | null;
+  /** Bytes canonicos del lote, una vez materializado. */
+  bytes: number;
+}
+
+/** El plan de un segundo: sus peticiones, sus instantes y sus cuerpos. */
 interface PlanSegundo {
   /** 1-based desde el arranque de la corrida. */
   seg: number;
   /** Segundo absoluto (epoch en segundos). */
   epoch: number;
+  /** Cuantas PETICIONES salen este segundo. Es lo que fija `request.client`. */
   cuota: number;
-  eventos: EventoPlan[];
-  /** Los documentos ya construidos. null mientras no se ha materializado. */
-  docs: DocumentoListo[] | null;
+  /** Cuantos EVENTOS suman esas peticiones. Es cuota x tamaño de cada lote. */
+  eventosTotales: number;
+  peticiones: PeticionPlan[];
 }
 
 /**
@@ -119,6 +137,15 @@ export class PlanificadorService implements OnApplicationShutdown {
    * corridas con la misma semilla dejarian de ser comparables.
    */
   private rRitmo = prng(2);
+  /**
+   * Cuantos documentos lleva cada peticion.
+   *
+   * Flujo propio, como los otros tres. Si compartiera el de las plantillas,
+   * cambiar el rango de `events` desplazaria tambien QUE documento le toca a
+   * cada evento, y dos corridas con la misma semilla dejarian de ser
+   * comparables — que es justo lo que la semilla existe para garantizar.
+   */
+  private rTamano = prng(3);
   private faseActual = '';
 
   private segundoRitmo = -1;
@@ -146,6 +173,7 @@ export class PlanificadorService implements OnApplicationShutdown {
 
     this.r = prng(perfil.pool.semilla ^ 0x9e3779b9);
     this.rRitmo = prng(perfil.pool.semilla ^ 0x85ebca6b);
+    this.rTamano = prng(perfil.pool.semilla ^ 0xc2b2ae35);
     this.segundoRitmo = -1;
     this.inicio = Date.now();
 
@@ -156,9 +184,6 @@ export class PlanificadorService implements OnApplicationShutdown {
       plan: [],
       activo: -1,
       disparado: 0,
-      buffer: [],
-      bufferBytes: 0,
-      bufferDesde: 0,
       llamadas: [],
       siguienteLlamada: 0,
     }));
@@ -204,9 +229,6 @@ export class PlanificadorService implements OnApplicationShutdown {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
-    // Sacar lo que quedo en los buffers: si no, esos eventos figuran como
-    // ofrecidos y nunca como aceptados, y el deficit final seria mentira.
-    for (const e of this.estados) this.vaciarBuffer(e);
     this.metricas.marcarFin();
     this.logger.log(`corrida terminada (${motivo})`);
   }
@@ -229,7 +251,6 @@ export class PlanificadorService implements OnApplicationShutdown {
     if (this.corrida.perfil.modo === 'smoke') this.tickSmoke(ahora, transcurrido);
     else this.tickCarga(ahora, transcurrido);
 
-    this.vaciarBuffersVencidos(ahora);
   }
 
   /** Modo carga: ritmo sostenido por fase, Poisson por tenant. */
@@ -277,17 +298,14 @@ export class PlanificadorService implements OnApplicationShutdown {
 
       // Si la ventana de materializacion se quedo corta, se materializa aqui
       // mismo: mas vale un segundo con trabajo extra que un segundo vacio.
-      if (s.docs === null) this.materializar(e, s);
+      this.materializar(e, s);
 
-      while (e.disparado < s.eventos.length && s.eventos[e.disparado]!.ms <= ahora) {
-        const listo = s.docs![e.disparado]!;
-        this.metricas.ofrecidos(e.tenant.id, 1, listo.bytes);
-
-        if (e.buffer.length === 0) e.bufferDesde = ahora;
-        e.buffer.push(listo.doc);
-        e.bufferBytes += listo.bytes;
-        if (e.buffer.length >= this.corrida.perfil.envio.eventosPorRequest) this.vaciarBuffer(e);
-
+      // Se dispara la PETICION entera en su instante. Sin buffer: el tamaño
+      // del lote ya lo decidio el plan.
+      while (e.disparado < s.peticiones.length && s.peticiones[e.disparado]!.ms <= ahora) {
+        const req = s.peticiones[e.disparado]!;
+        this.metricas.ofrecidos(e.tenant.id, req.eventos.length, req.bytes, 1);
+        this.emisor.enviar(e.tenant, req.docs!.map((d) => d.doc), req.bytes);
         e.disparado++;
       }
     }
@@ -303,22 +321,26 @@ export class PlanificadorService implements OnApplicationShutdown {
       if (e.activo < 0) continue;
       const s = e.plan[e.activo];
       if (s) {
-        const pendientes = s.eventos.length - e.disparado;
-        if (pendientes > 0) {
-          this.metricas.ofrecidos(e.tenant.id, pendientes);
-          this.metricas.descartadosRetraso(e.tenant.id, pendientes);
+        // Peticiones que no llegaron a salir, y los eventos que llevaban.
+        const reqsPendientes = s.peticiones.slice(e.disparado);
+        const eventosPendientes = reqsPendientes.reduce((n, r) => n + r.eventos.length, 0);
+        if (eventosPendientes > 0) {
+          this.metricas.ofrecidos(e.tenant.id, eventosPendientes, 0, reqsPendientes.length);
+          this.metricas.descartadosRetraso(e.tenant.id, eventosPendientes, reqsPendientes.length);
           // ⚠ O-08. Estos eventos tienen `rpf_id` y `sequence` asignados desde
           // que se planifico el segundo, pero NO salieron. Si el manifiesto no
           // los marcara, la conciliacion veria sus secuencias ausentes en C4 y
           // acusaria a C3 de perder eventos que nunca existieron.
           this.manifiesto.noEmitidos(
             e.tenant.id,
-            s.eventos.slice(e.disparado).map((ev) => ({ rpf_id: ev.rpfId, sequence: ev.sequence })),
+            reqsPendientes.flatMap((r) =>
+              r.eventos.map((ev) => ({ rpf_id: ev.rpfId, sequence: ev.sequence })),
+            ),
             'retraso',
           );
         }
         // El segundo ya paso: se sueltan sus cuerpos para que no se acumulen.
-        s.docs = null;
+        for (const r of s.peticiones) { r.docs = null; r.bytes = 0; }
       }
       e.activo = -1;
       e.disparado = 0;
@@ -338,19 +360,25 @@ export class PlanificadorService implements OnApplicationShutdown {
     for (const e of this.estados) {
       for (const s of e.plan) {
         if (s.epoch < segAbs || s.epoch > segAbs + VENTANA_MATERIALIZACION) continue;
-        if (s.docs === null) { this.materializar(e, s); return; }   // uno por tick
+        if (s.peticiones.some((r) => r.docs === null)) { this.materializar(e, s); return; }
       }
     }
   }
 
-  /** Construye los cuerpos de un segundo a partir de los indices del plan. */
-  private materializar(e: EstadoTenant, s: PlanSegundo): void {
-    const docs: DocumentoListo[] = new Array(s.eventos.length);
-    for (let i = 0; i < s.eventos.length; i++) {
-      const ev = s.eventos[i]!;
-      docs[i] = this.pool.materializar(ev.plantilla, ev.rpfId, ev.sequence);
+  /** Construye los cuerpos de un segundo, peticion por peticion. */
+  private materializar(_e: EstadoTenant, s: PlanSegundo): void {
+    for (const req of s.peticiones) {
+      if (req.docs !== null) continue;
+      const docs: DocumentoListo[] = new Array(req.eventos.length);
+      let bytes = 0;
+      for (let i = 0; i < req.eventos.length; i++) {
+        const ev = req.eventos[i]!;
+        docs[i] = this.pool.materializar(ev.plantilla, ev.rpfId, ev.sequence);
+        bytes += docs[i]!.bytes;
+      }
+      req.docs = docs;
+      req.bytes = bytes;
     }
-    s.docs = docs;
   }
 
   /**
@@ -375,13 +403,22 @@ export class PlanificadorService implements OnApplicationShutdown {
       const seg = siguiente - Math.floor(this.inicio / 1000) + 1;
 
       this.estados.forEach((e, idx) => {
+        // La cuota son PETICIONES, y cada una sortea cuantos documentos lleva.
         const cuota = cuotas[idx] ?? 0;
         const ms = this.instantes(cuota, siguiente * 1000);
-        const eventos: EventoPlan[] = ms.map((t) => {
-          const { rpfId, sequence } = e.hilos.siguiente();
-          return { ms: t, plantilla: this.pool.sortearIndice(), rpfId, sequence };
+
+        let eventosTotales = 0;
+        const peticiones: PeticionPlan[] = ms.map((t) => {
+          const cuantos = this.sortearTamanoLote();
+          const eventos: EventoPlan[] = Array.from({ length: cuantos }, () => {
+            const { rpfId, sequence } = e.hilos.siguiente();
+            return { plantilla: this.pool.sortearIndice(), rpfId, sequence };
+          });
+          eventosTotales += cuantos;
+          return { ms: t, eventos, docs: null, bytes: 0 };
         });
-        e.plan.push({ seg, epoch: siguiente, cuota, eventos, docs: null });
+
+        e.plan.push({ seg, epoch: siguiente, cuota, eventosTotales, peticiones });
       });
 
       siguiente++;
@@ -395,6 +432,20 @@ export class PlanificadorService implements OnApplicationShutdown {
         if (e.activo >= 0) e.activo -= corte;
       }
     }
+  }
+
+  /**
+   * Cuantos documentos lleva ESTA peticion.
+   *
+   * Sin `events.client` el tamaño es fijo, el de `envio.eventos_por_request`
+   * — asi las configuraciones que ya existian siguen dando exactamente lo
+   * mismo. Con rango, se sortea uno por peticion: dos peticiones del mismo
+   * segundo pueden llevar 3 y 9.
+   */
+  private sortearTamanoLote(): number {
+    const r = this.corrida.perfil.eventos.porPeticion;
+    if (!r) return Math.max(1, this.corrida.perfil.envio.eventosPorRequest);
+    return r.min + Math.floor(this.rTamano() * (r.max - r.min + 1));
   }
 
   /**
@@ -454,13 +505,17 @@ export class PlanificadorService implements OnApplicationShutdown {
     if (!pendientes) this.detener('todas las llamadas disparadas');
   }
 
-  /** Una rafaga: N eventos hacia el mismo tenant, todos en vuelo a la vez. */
+  /**
+   * Una rafaga: N eventos hacia el mismo tenant, todos en vuelo a la vez.
+   *
+   * El tamaño de cada peticion sale del mismo sorteo que en modo carga, asi
+   * que `events.client` vale tambien aqui y las dos rutas se comportan igual.
+   */
   private rafaga(e: EstadoTenant, eventos: number, ahora: number): void {
-    const porRequest = this.corrida.perfil.envio.eventosPorRequest;
     let restantes = eventos;
 
     while (restantes > 0) {
-      const n = Math.min(porRequest, restantes);
+      const n = Math.min(this.sortearTamanoLote(), restantes);
       const lote: Documento[] = new Array(n);
       let bytes = 0;
       for (let i = 0; i < n; i++) {
@@ -469,7 +524,7 @@ export class PlanificadorService implements OnApplicationShutdown {
         lote[i] = listo.doc;
         bytes += listo.bytes;
       }
-      this.metricas.ofrecidos(e.tenant.id, n, bytes);
+      this.metricas.ofrecidos(e.tenant.id, n, bytes, 1);
       // Sin await: las requests de la rafaga quedan todas en vuelo a la vez.
       this.emisor.enviar(e.tenant, lote, bytes);
       restantes -= n;
@@ -478,58 +533,18 @@ export class PlanificadorService implements OnApplicationShutdown {
   }
 
   // -------------------------------------------------------------------------
-  // Emision y lotes
-  // -------------------------------------------------------------------------
-
-  private emitir(e: EstadoTenant, ahora: number): void {
-    const { rpfId, sequence } = e.hilos.siguiente();
-    const listo = this.pool.tomar(rpfId, sequence);
-
-    this.metricas.ofrecidos(e.tenant.id, 1, listo.bytes);
-
-    if (e.buffer.length === 0) e.bufferDesde = ahora;
-    e.buffer.push(listo.doc);
-    e.bufferBytes += listo.bytes;
-
-    if (e.buffer.length >= this.corrida.perfil.envio.eventosPorRequest) {
-      this.vaciarBuffer(e);
-    }
-  }
-
-  /**
-   * Saca los lotes parciales que llevan demasiado esperando.
-   *
-   * Sin esto, un tenant de la cola larga de Zipf (a ~9 eventos/s) tardaria
-   * segundos en llenar un lote de 20 y le estarias metiendo latencia
-   * artificial a la medicion — latencia del arnes disfrazada de latencia del
-   * sistema.
-   */
-  private vaciarBuffersVencidos(ahora: number): void {
-    const espera = this.corrida.perfil.envio.esperaMaximaLoteMs;
-    for (const e of this.estados) {
-      if (e.buffer.length > 0 && ahora - e.bufferDesde >= espera) this.vaciarBuffer(e);
-    }
-  }
-
-  private vaciarBuffer(e: EstadoTenant): void {
-    if (e.buffer.length === 0) return;
-    const lote = e.buffer;
-    const bytes = e.bufferBytes;
-    e.buffer = [];
-    e.bufferBytes = 0;
-    e.bufferDesde = 0;
-    this.emisor.enviar(e.tenant, lote, bytes);
-  }
-
-  // -------------------------------------------------------------------------
   // Perfil
   // -------------------------------------------------------------------------
 
   /**
-   * La CUOTA de cada tenant para este segundo: un numero entero de eventos.
+   * La CUOTA de cada tenant para este segundo: un numero entero de PETICIONES.
+   *
+   * ⚠ PETICIONES, no eventos. Cuantos documentos lleva cada una lo decide
+   * `sortearTamanoLote`. Los dos juntos dan el ritmo de eventos.
    *
    * Sin `request.client` se comporta como siempre: el ritmo de la fase
-   * repartido por los pesos (Zipf o uniforme).
+   * repartido por los pesos (Zipf o uniforme). Ahi el ritmo de la fase se
+   * sigue interpretando en eventos/s y, con lotes de tamaño 1, coincide.
    *
    * Con `request.client`, cada tenant sortea su propio entero dentro del
    * rango y ese numero se cumple EXACTO. El reparto Zipf no interviene: el
@@ -555,9 +570,11 @@ export class PlanificadorService implements OnApplicationShutdown {
       const s = e.activo >= 0 ? e.plan[e.activo] : undefined;
       return {
         tenant: e.tenant.id,
-        ev_s: s?.cuota ?? 0,
+        // `req_s` son PETICIONES; `ev_s`, los eventos que suman.
+        req_s: s?.cuota ?? 0,
+        ev_s: s?.eventosTotales ?? 0,
         disparados: e.disparado,
-        materializados: e.plan.filter((x) => x.docs !== null).length,
+        materializados: e.plan.filter((x) => x.peticiones.every((r) => r.docs !== null)).length,
       };
     });
   }

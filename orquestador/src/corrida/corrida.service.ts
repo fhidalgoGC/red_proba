@@ -52,8 +52,20 @@ export interface OpcionesCorrida {
   request?: {
     client?: { min: number; max: number } | [number, number] | number;
   };
-  /** Total de eventos; si viene, manda sobre `rate`. */
-  events?: number;
+  /**
+   * DOS SIGNIFICADOS, distinguidos por la forma. No es elegante, pero el campo
+   * ya existia y romper los curls guardados de alguien es peor:
+   *
+   *   events: 2500                          TOTAL de eventos (modo smoke).
+   *                                         Excluyente con `rate` y `request`.
+   *
+   *   events: { client: {min:1, max:10} }   DOCUMENTOS POR PETICION.
+   *                                         COMPLEMENTA a `request`, no lo
+   *                                         excluye: uno fija cuantas
+   *                                         peticiones salen y el otro cuanto
+   *                                         lleva cada una.
+   */
+  events?: number | { client?: { min: number; max: number } | [number, number] | number };
   perRequest?: number;
   concurrency?: number;
   /**
@@ -167,19 +179,28 @@ export class CorridaService {
     const plantillas = entero(o.pool ?? base.pool.plantillas, 'pool', 1);
     const verify = o.verify ?? base.pool.tasaVerificacion;
 
-    const dados = [o.rate !== undefined && 'rate', o.events !== undefined && 'events',
+    // `events` numerico es un TOTAL y excluye a los otros dos. `events` como
+    // objeto es el tamaño del lote y CONVIVE con ellos.
+    const eventsEsTotal = typeof o.events === 'number';
+    const eventsEsRango = o.events !== undefined && typeof o.events === 'object' && o.events !== null;
+
+    const dados = [o.rate !== undefined && 'rate', eventsEsTotal && 'events',
                    o.request !== undefined && 'request'].filter(Boolean);
     if (dados.length > 1) {
       throw new Error(
         `${dados.join(' y ')} son excluyentes: 'rate' fija un ritmo plano, ` +
-        `'request' fija rangos de ritmo, 'events' fija un total.`,
+        `'request' fija rangos de peticiones/s, 'events' (numero) fija un total. ` +
+        `Para el tamaño del lote usa 'events' como objeto: { client: { min, max } }.`,
       );
     }
 
     const rate = o.rate === undefined ? 40 : numero(o.rate, 'rate', 0);
-    const events = o.events === undefined ? null : entero(o.events, 'events', 1);
+    const events = eventsEsTotal ? entero(o.events, 'events', 1) : null;
 
     const porCliente = rangoRitmo(o.request?.client, 'request.client');
+    const porPeticion = eventsEsRango
+      ? rangoRitmo((o.events as { client?: unknown }).client, 'events.client')
+      : null;
 
     // Se construye la forma YAML y se pasa por LOS MISMOS validadores que el
     // archivo. Un perfil que entra por HTTP no puede saltarse las
@@ -189,6 +210,7 @@ export class CorridaService {
       reparto: { tipo: o.spread ?? base.reparto.tipo, exponente: base.reparto.exponente },
       llegadas: { tipo: o.arrivals ?? base.llegadas.tipo, tick_ms: base.llegadas.tickMs },
       peticiones: { client: porCliente ?? undefined },
+      eventos: { client: porPeticion ?? undefined },
       pool: {
         plantillas,
         semilla: seed,

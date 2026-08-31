@@ -44,7 +44,10 @@ const clon = (): Record<string, unknown> => JSON.parse(JSON.stringify(VALIDO)) a
 
 /** Un esquema propio por corrida: los tests no pisan datos de nadie. */
 const ESQUEMA = 'c3_test';
-const BD = process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4';
+// ⚠ Base PROPIA de C3, no la de C4. Son dominios sin ruta de red entre ellos
+// (D-03); si los tests compartieran base, cualquiera podria escribir una
+// conciliacion con JOIN que pasaria aqui y seria imposible en produccion.
+const BD = process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c3_test';
 
 let config: ConfigService;
 let bd: BdService;

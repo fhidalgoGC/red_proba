@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { BYTES_MAXIMO, BYTES_MINIMO_VIABLE, RESERVA_RELLENO } from '../generador/payload';
-import type { Envio, Fase, Llegadas, Modo, Peticiones, Perfil, PerfilCarga, PerfilSmoke, Pool, Rango, Reparto, Tenant } from './tipos';
+import type { Envio, EventosPorPeticion, Fase, Llegadas, Modo, Peticiones, Perfil, PerfilCarga, PerfilSmoke, Pool, Rango, Reparto, Tenant } from './tipos';
 
 /**
  * Carga y valida los dos archivos de configuracion.
@@ -208,7 +208,21 @@ export function validarPerfil(doc: unknown, ruta: string): Perfil {
     );
   }
 
-  return { modo, smoke, carga, reparto, llegadas, peticiones, pool, envio };
+  const eventos: EventosPorPeticion = {
+    porPeticion: rangoRitmo(d.eventos?.client, `${ruta}: eventos.client`),
+  };
+  // Un rango de peticiones SI puede empezar en 0 —hay segundos sin trafico—,
+  // pero una peticion con 0 documentos no es nada: seria un POST con el array
+  // vacio, que C3 contesta 202 sin haber recibido un solo evento. Contaria
+  // como peticion enviada y como cero eventos, y el ritmo medido mentiria.
+  if (eventos.porPeticion && eventos.porPeticion.min < 1) {
+    throw new Error(
+      `${ruta}: eventos.client empieza en ${eventos.porPeticion.min}; una peticion ` +
+        `lleva al menos 1 documento.`,
+    );
+  }
+
+  return { modo, smoke, carga, reparto, llegadas, peticiones, eventos, pool, envio };
 }
 
 // ---------------------------------------------------------------------------

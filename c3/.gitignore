@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 logs/
 dist-test/
+
+# credenciales locales; .env.ejemplo es la plantilla
+.env

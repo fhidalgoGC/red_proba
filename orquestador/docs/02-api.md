@@ -24,7 +24,8 @@ curl -X POST localhost:3000/batch -H 'content-type: application/json' -d '{
   "id": "xx01",
   "client": "all",
   "seconds": 20,
-  "request": { "client": { "min": 20, "max": 80 } }
+  "request": { "client": { "min": 20, "max": 80 } },
+  "events":  { "client": { "min": 1,  "max": 10 } }
 }'
 ```
 
@@ -69,9 +70,38 @@ Todos los campos son opcionales.
 
 | Campo | Por defecto | Qué hace |
 |---|---|---|
-| `request.client` | — | `{min, max}` eventos **por cliente y por segundo**. Cada segundo se sortea un entero dentro del rango y ese es el número exacto que sale |
+| `request.client` | — | `{min, max}` **PETICIONES HTTP** por cliente y por segundo. Cada segundo se sortea un entero dentro del rango y ese es el número exacto de peticiones que sale |
+| `events.client` | tamaño fijo | `{min, max}` **documentos dentro de cada petición**. Se sortea uno POR PETICIÓN: dos del mismo segundo pueden llevar 3 y 9 |
 | `rate` | 40 | Ritmo **plano** en ev/s por tenant |
 | `events` | — | **Total** de eventos, repartido en la ventana con un número aleatorio de llamadas por tenant |
+
+### ⚠ `request` son peticiones, `events` son documentos
+
+Es la distinción que más confunde, porque hasta ahora `request.client` contaba
+**eventos**. Ya no:
+
+```
+eventos/s  =  peticiones/s  ×  documentos por petición
+```
+
+Con `request:{100,200}` y `events:{1,10}` salen ~150 peticiones/s de ~5,5
+documentos cada una: **~825 eventos/s**. Medido: 3.205 peticiones y 17.744
+documentos en 20 s (160,2 req/s · 5,54 docs/petición).
+
+Si omites `events`, el tamaño es fijo y lo pone `perRequest` — por defecto 1,
+así que **`request` y eventos vuelven a coincidir** y las corridas viejas dan
+lo mismo que antes.
+
+El informe trae los dos por separado, en `resumen.requests`:
+
+```jsonc
+"requests": { "offered": 3205, "sent": 3205, "completed": 3205,
+              "per_s": 160.3, "eventos_por_request": 5.54 }
+```
+
+Sin los dos números no se puede decir si el destino se satura **por petición**
+(concurrencia HTTP) o **por evento** (la firma de KMS) — y son cuellos
+distintos.
 
 `request.client` acepta también `[min, max]` y un escalar (`40` = rango
 degenerado).
@@ -90,8 +120,9 @@ degenerado).
 Pedir dos a la vez da **400**:
 
 ```
-'rate' y 'request' son excluyentes: 'rate' fija un ritmo plano,
-'request' fija rangos de ritmo, 'events' fija un total.
+rate y request son excluyentes: 'rate' fija un ritmo plano,
+'request' fija rangos de peticiones/s, 'events' (numero) fija un total.
+Para el tamaño del lote usa 'events' como objeto: { client: { min, max } }.
 ```
 
 ### Cómo se envía

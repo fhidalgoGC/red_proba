@@ -147,21 +147,30 @@ export class OutboxRepository {
    * Las filas del outbox. `status='PENDING'` y `next_attempt=now()`: el relay
    * las ve en su siguiente tick.
    *
-   * `e4_commit` se estampa con `clock_timestamp()` y no con `now()`. En
-   * Postgres, `now()` devuelve el instante en que EMPEZO la transaccion, asi
-   * que con un lote de 20 todas las filas compartirian marca y el tramo e3→e4
-   * mediria de mas. `clock_timestamp()` da el instante real de la fila.
+   * ⚠ `e4_commit` LO PONE EL PROCESO, no la base.
    *
-   * Es, con precision, el momento de la escritura y no el del COMMIT: entre
-   * los dos queda el fsync del WAL. Se acepta esa diferencia a proposito —
-   * medir el instante posterior al commit exigiria un segundo UPDATE por fila,
-   * y ese round trip añadiria mas latencia de la que corrige.
+   * Antes usaba `clock_timestamp()` de Postgres, que daba precision por fila
+   * dentro del lote. Estaba mal, y costo un test intermitente en encontrarlo:
+   * `e5` salia del reloj de Postgres y `e6` del reloj de Node, asi que el
+   * tramo e5→e6 podia dar NEGATIVO cuando la publicacion tardaba menos que la
+   * deriva entre los dos relojes. En local son el contenedor de Docker y el
+   * host; en AWS serian el RDS y la tarea de Fargate — dos maquinas.
+   *
+   * M-06 acepta esa deriva entre C3 y C4, que estan en cuentas distintas y no
+   * hay alternativa. Pero DENTRO de C3 no hay excusa: e0..e6 salen todas del
+   * reloj de este proceso y los seis intervalos son coherentes por
+   * construccion.
+   *
+   * Lo que se pierde es la precision por fila dentro de un lote — todas
+   * comparten marca. No importa: se escriben en un solo INSERT, asi que su
+   * instante real ES el mismo.
    */
   private async insertarOutbox(c: PoolClient, procesados: Procesado[]): Promise<Escrito[]> {
+    const e4 = new Date().toISOString();
     const COLS = 7;
     const tuplas = procesados.map((_, i) => {
       const b = i * COLS;
-      return `($${b + 1}, $${b + 2}, $${b + 3}::jsonb, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, clock_timestamp())`;
+      return `($${b + 1}, $${b + 2}, $${b + 3}::jsonb, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${procesados.length * COLS + 1}::timestamptz)`;
     });
     const valores = procesados.flatMap((p) => [
       p.rpfId,
@@ -172,6 +181,7 @@ export class OutboxRepository {
       p.marcas.e2,
       p.marcas.e3,
     ]);
+    valores.push(e4);
 
     const { rows } = await c.query<{ id: string; payload_hash: string; e4_commit: Date }>(
       `INSERT INTO ${this.e}.outbox
@@ -215,6 +225,10 @@ export class OutboxRepository {
    * reintentarian todos en el mismo instante.
    */
   async reclamar(limite: number, capSeg: number): Promise<Reclamado[]> {
+    // Del reloj de ESTE proceso, como e0..e4 y e6. Ver la nota de e4_commit:
+    // mezclar el reloj de Postgres con el de Node hacia que e5→e6 pudiera
+    // salir negativo.
+    const e5 = new Date().toISOString();
     const { rows } = await this.bd.pool.query<{
       id: string;
       rpf_id: string;
@@ -236,11 +250,11 @@ export class OutboxRepository {
               next_attempt  = now() + (interval '1 second'
                             * least(power(2, o.attempts), $2::numeric)
                             * (0.5 + random())),
-              e5_reclamado  = clock_timestamp()
+              e5_reclamado  = $3::timestamptz
          FROM lote
         WHERE o.id = lote.id
         RETURNING o.id, o.rpf_id, o.payload_hash, o.envelope, o.attempts, o.e5_reclamado`,
-      [limite, capSeg],
+      [limite, capSeg, e5],
     );
 
     this.contadores.reclamadas += rows.length;

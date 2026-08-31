@@ -33,8 +33,24 @@ import { Injectable } from '@nestjs/common';
  */
 
 export interface Contadores {
-  /** Lo que el reloj pidio. */
+  /** Lo que el reloj pidio, en EVENTOS. */
   ofrecidos: number;
+  /**
+   * Las mismas tres metricas, contadas en PETICIONES HTTP.
+   *
+   * ⚠ Sin esto no se puede responder si el limite es por peticion o por
+   * evento. Con lotes de 10, un destino puede estar saturado de peticiones
+   * mucho antes que de documentos —o al reves, si lo que le cuesta es firmar—
+   * y desde un solo numero los dos casos son indistinguibles.
+   */
+  peticionesOfrecidas: number;
+  peticionesEnviadas: number;
+  peticionesCompletadas: number;
+  peticionesAceptadas: number;
+  peticionesRechazadas: number;
+  peticionesFallidas: number;
+  peticionesDescartadasSaturacion: number;
+  peticionesDescartadasRetraso: number;
   /**
    * SENT — el instante en que se LLAMA al endpoint, no cuando acaba.
    * Es lo que gobiernan los rangos de `request`.
@@ -115,6 +131,9 @@ const SEGUNDOS_MAXIMOS = 14_400;
 function vacio(): Contadores {
   return {
     ofrecidos: 0,
+    peticionesOfrecidas: 0, peticionesEnviadas: 0, peticionesCompletadas: 0,
+    peticionesAceptadas: 0, peticionesRechazadas: 0, peticionesFallidas: 0,
+    peticionesDescartadasSaturacion: 0, peticionesDescartadasRetraso: 0,
     enviados: 0, bytesEnviados: 0,
     completados: 0, bytesCompletados: 0,
     aceptados: 0, rechazados: 0, fallidos: 0,
@@ -181,15 +200,18 @@ export class MetricasService {
     this._ritmoObjetivo = ritmoObjetivo;
   }
 
-  ofrecidos(tenantId: string, n: number, bytes = 0): void {
+  /** @param peticiones cuantas peticiones HTTP suman esos `n` eventos. */
+  ofrecidos(tenantId: string, n: number, bytes = 0, peticiones = 0): void {
     this.sumar(tenantId, 'ofrecidos', n);
     this.sumar(tenantId, 'bytesOfrecidos', bytes);
+    if (peticiones > 0) this.sumar(tenantId, 'peticionesOfrecidas', peticiones);
   }
 
-  /** SENT: se llama al endpoint. Aqui, no cuando conteste. */
+  /** SENT: se llama al endpoint. Aqui, no cuando conteste. Es UNA peticion. */
   enviados(tenantId: string, n: number, bytes: number): void {
     this.sumar(tenantId, 'enviados', n);
     this.sumar(tenantId, 'bytesEnviados', bytes);
+    this.sumar(tenantId, 'peticionesEnviadas', 1);
   }
 
   /**
@@ -206,24 +228,33 @@ export class MetricasService {
 
     this.sumar(tenantId, 'completados', n);
     this.sumar(tenantId, 'bytesCompletados', bytes);
+    // Una llamada a este metodo es UNA respuesta, lleve 1 documento o 20.
+    this.sumar(tenantId, 'peticionesCompletadas', 1);
     this.codigos.set(codigo, (this.codigos.get(codigo) ?? 0) + 1);
 
     if (codigo >= 200 && codigo < 300) {
       this.sumar(tenantId, 'aceptados', n);
       this.sumar(tenantId, 'bytesAceptados', bytes);
+      this.sumar(tenantId, 'peticionesAceptadas', 1);
     } else {
       this.sumar(tenantId, 'rechazados', n);
+      this.sumar(tenantId, 'peticionesRechazadas', 1);
     }
   }
+  /** Una llamada = UNA peticion sin respuesta, lleve 1 documento o 20. */
   fallidos(tenantId: string, n: number, causa: string): void {
     this.sumar(tenantId, 'fallidos', n);
+    this.sumar(tenantId, 'peticionesFallidas', 1);
     this.errores.set(causa, (this.errores.get(causa) ?? 0) + 1);
   }
   descartadosSaturacion(tenantId: string, n: number): void {
     this.sumar(tenantId, 'descartadosSaturacion', n);
+    this.sumar(tenantId, 'peticionesDescartadasSaturacion', 1);
   }
-  descartadosRetraso(tenantId: string, n: number): void {
+  /** @param peticiones cuantas peticiones enteras se quedaron sin salir. */
+  descartadosRetraso(tenantId: string, n: number, peticiones = 0): void {
     this.sumar(tenantId, 'descartadosRetraso', n);
+    if (peticiones > 0) this.sumar(tenantId, 'peticionesDescartadasRetraso', peticiones);
   }
 
   enVuelo(delta: number): void { this._enVuelo += delta; }

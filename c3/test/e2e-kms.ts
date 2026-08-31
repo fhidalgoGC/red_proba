@@ -79,8 +79,9 @@ async function main(): Promise<void> {
   process.env.KMS_HMAC_KEY_ID = LLAVES.hmac;
   process.env.KMS_ENCRYPT_KEY_ID = LLAVES.cifrado;
   process.env.TENANT_ID = process.env.TENANT_ID ?? 'tenant-01';
+  // Base propia de C3. La de C4 la abre el worker de C4, no este proceso.
   process.env.DATABASE_URL =
-    process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c4';
+    process.env.DATABASE_URL ?? 'postgres://cw:cwlocal@127.0.0.1:5433/rpf_c3_test';
 
   const config = new ConfigService();
   assert.equal(config.modoLocal, false, 'con las tres llaves NO puede estar en modo local');
