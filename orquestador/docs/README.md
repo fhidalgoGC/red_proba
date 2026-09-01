@@ -11,6 +11,10 @@ cite después como parte del diseño del producto.
 > ni conexión. También publicado en
 > [claude.ai](https://claude.ai/code/artifact/caafc080-acc9-4c54-8951-3902e3e1ed1d).
 
+
+> **Resultados medidos** — la corrida de 39 tenants a 781 ev/s del 2026-09-01,
+> con el informe navegable y los datos crudos: [docs/runs/](../../docs/runs/README.md).
+
 ---
 
 ## Los documentos

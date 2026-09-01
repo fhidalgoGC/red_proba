@@ -1,0 +1,512 @@
+<title>La infraestructura de la PoC · 616 recursos, dos VPC y ningún camino entre ellas</title>
+<style>
+:root{
+  --ground:#EEF1F0; --surface:#FBFCFC; --edge:#CDD6D3;
+  --ink:#101816; --ink-2:#3E4B47; --ink-3:#6B7A75;
+  --signal:#0B6E6E; --signal-soft:#0B6E6E1F; --ok:#2F6B47;
+  --floor:#A55A2A; --floor-soft:#A55A2A1A;
+  --orq:#B4740F; --c3:#0B6E6E; --c4:#5B4B9E;
+  --orq-s:#B4740F1A; --c3-s:#0B6E6E14; --c4-s:#5B4B9E14;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Charter","Bitstream Charter",Georgia,"Times New Roman",serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --ground:#0C1211; --surface:#131B19; --edge:#26332F;
+  --ink:#E3EAE7; --ink-2:#A9B7B2; --ink-3:#788883;
+  --signal:#3FADA6; --signal-soft:#3FADA626; --ok:#6FB58A;
+  --floor:#D6924F; --floor-soft:#D6924F1F;
+  --orq:#E0A450; --c3:#3FADA6; --c4:#9C8CE0;
+  --orq-s:#E0A45021; --c3-s:#3FADA61A; --c4-s:#9C8CE01A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0C1211; --surface:#131B19; --edge:#26332F;
+  --ink:#E3EAE7; --ink-2:#A9B7B2; --ink-3:#788883;
+  --signal:#3FADA6; --signal-soft:#3FADA626; --ok:#6FB58A;
+  --floor:#D6924F; --floor-soft:#D6924F1F;
+  --orq:#E0A450; --c3:#3FADA6; --c4:#9C8CE0;
+  --orq-s:#E0A45021; --c3-s:#3FADA61A; --c4-s:#9C8CE01A;
+}
+:root[data-theme="light"]{
+  --ground:#EEF1F0; --surface:#FBFCFC; --edge:#CDD6D3;
+  --ink:#101816; --ink-2:#3E4B47; --ink-3:#6B7A75;
+  --signal:#0B6E6E; --signal-soft:#0B6E6E1F; --ok:#2F6B47;
+  --floor:#A55A2A; --floor-soft:#A55A2A1A;
+  --orq:#B4740F; --c3:#0B6E6E; --c4:#5B4B9E;
+  --orq-s:#B4740F1A; --c3-s:#0B6E6E14; --c4-s:#5B4B9E14;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--serif);
+  font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 28px 92px}
+.col{max-width:64ch}
+h1,h2,h3,.lab,th,.key,figcaption,footer,code,.num,table,.eq{font-family:var(--mono)}
+h1{font-size:clamp(26px,4.2vw,44px);line-height:1.1;margin:0;font-weight:600;
+  letter-spacing:-.022em;text-wrap:balance}
+h2{font-size:13px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--signal);margin:0 0 20px}
+h3{font-size:15.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink)}
+p{margin:0 0 1em;font-family:var(--serif)}
+.lab{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.lede{font-size:19px;line-height:1.55;color:var(--ink-2)}
+strong{font-weight:600;color:var(--ink)}
+code{font-size:.86em;background:var(--signal-soft);padding:.1em .34em;border-radius:2px}
+.num,table{font-variant-numeric:tabular-nums}
+header{padding:54px 0 30px;border-bottom:2px solid var(--ink)}
+section{padding:44px 0;border-bottom:1px solid var(--edge)}
+section:last-of-type{border-bottom:0}
+.meta{display:flex;flex-wrap:wrap;margin-top:28px;border-top:1px solid var(--edge);border-left:1px solid var(--edge)}
+.meta div{flex:1 1 146px;padding:10px 14px;border-right:1px solid var(--edge);border-bottom:1px solid var(--edge)}
+.meta .lab{display:block;margin-bottom:3px}
+.meta .num{font-size:15px;font-weight:500}
+figure{margin:0}
+.dia{width:100%;height:auto;margin-top:8px;background:var(--surface);border:1px solid var(--edge);display:block}
+.dia text{font-family:var(--mono)}
+figcaption{font-size:12.5px;color:var(--ink-3);margin-top:11px;line-height:1.55;max-width:78ch}
+.key{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:13px;font-size:12px;color:var(--ink-2)}
+.key i{display:inline-block;width:12px;height:12px;margin-right:7px;vertical-align:-.1em;border:1px solid var(--edge)}
+.scroll{overflow-x:auto;margin-top:18px;border:1px solid var(--edge);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:6px 12px;text-align:right;white-space:nowrap}
+th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--ink-3);
+  border-bottom:1px solid var(--edge);background:var(--ground)}
+td{border-bottom:1px solid var(--edge)}
+tbody tr:last-child td{border-bottom:0}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+td:first-child{color:var(--ink)}
+tr.tot td{border-top:1px solid var(--ink-3);font-weight:600}
+.note{border-left:3px solid var(--floor);background:var(--floor-soft);padding:16px 20px;margin-top:24px}
+.note h3{color:var(--floor);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:9px}
+.note p{margin:0 0 .7em;max-width:64ch} .note p:last-child{margin-bottom:0}
+.ok-note{border-left-color:var(--ok);background:#2F6B4714}
+.ok-note h3{color:var(--ok)}
+.eq{font-size:13.5px;line-height:1.9;margin-top:20px;overflow-x:auto;padding:16px 18px;
+  background:var(--surface);border:1px solid var(--edge)}
+.svc{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;padding:2px 7px;font-weight:600;color:#FBFCFC;vertical-align:.12em}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0;
+  border-top:1px solid var(--edge);border-left:1px solid var(--edge);margin-top:24px}
+.grid3 div{padding:16px;border-right:1px solid var(--edge);border-bottom:1px solid var(--edge)}
+.grid3 .n{font-family:var(--mono);font-size:22px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.grid3 .lab{display:block;margin-top:8px}
+.grid3 .sub{font-family:var(--mono);font-size:11px;color:var(--ink-3);display:block;margin-top:6px;line-height:1.5}
+footer{padding:38px 0 0;font-size:11.5px;color:var(--ink-3);line-height:1.8}
+footer code{background:none;padding:0;color:var(--ink-2)}
+@media (max-width:640px){body{font-size:16px}.wrap{padding:0 18px 60px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<div class="wrap">
+
+<header>
+  <div class="lab">PoC RPF Proof Ledger · inventario del despliegue de 39 tenants · cuenta <b style="color:var(--ink)">276076558677</b> · us-west-2</div>
+  <h1 style="margin-top:15px">616 recursos, dos VPC,<br>y ningún camino entre ellas.</h1>
+  <p class="lede col" style="margin-top:18px">
+    Todo lo que Terraform creó para la corrida del 2026-09-01, y por qué está montado así.
+    La propiedad que la PoC existe para demostrar —<strong>que C3 y C4 no se pueden hablar</strong>—
+    no es una regla que alguien pueda aflojar: es la ausencia de una ruta.
+  </p>
+  <div class="meta">
+    <div><span class="lab">Recursos</span><span class="num">616</span></div>
+    <div><span class="lab">VPC</span><span class="num">2 · sin peering</span></div>
+    <div><span class="lab">Contenedores</span><span class="num">42 · 45 vCPU</span></div>
+    <div><span class="lab">Bases</span><span class="num">40 Postgres</span></div>
+    <div><span class="lab">Llaves KMS</span><span class="num">4</span></div>
+    <div><span class="lab">Coste encendido</span><span class="num">$2,77/h</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>La topología · dos dominios y un solo canal</h2>
+  <p class="col">Cada tenant tiene su contenedor y <strong>su propia instancia de Postgres</strong>.
+  El orquestador vive dentro de la VPC de C3 y lo que lo separa de los tenants es lo mismo que
+  separa a un tenant de otro: un security group.</p>
+  <figure>
+    <svg class="dia" viewBox="0 0 980 430" role="img" aria-label="Dos VPC sin ninguna ruta entre ellas: la de C3 con el orquestador y 39 tenants, la de C4 con el consumidor y su base. El unico camino que las une es una cola SQS FIFO, dibujada fuera de las dos.">
+  <defs>
+    <marker id="fl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="flc3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--c3)"/>
+    </marker>
+    <marker id="flc4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--c4)"/>
+    </marker>
+  </defs>
+
+  <!-- VPC C3 -->
+  <rect x="16" y="52" width="470" height="352" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.5"/>
+  <text x="30" y="76" font-size="12.5" font-weight="600" fill="var(--c3)">VPC C3 · participante</text>
+  <text x="30" y="93" font-size="11" fill="var(--ink-3)">10.101.0.0/16 · 1 AZ</text>
+
+  <!-- ORQ dentro de C3 -->
+  <rect x="34" y="112" width="196" height="66" fill="var(--surface)" stroke="var(--orq)" stroke-width="1.5"/>
+  <text x="46" y="134" font-size="12" font-weight="600" fill="var(--orq)">orquestador</text>
+  <text x="46" y="150" font-size="10.5" fill="var(--ink-3)">2 vCPU · 8 GiB · sg-orq</text>
+  <text x="46" y="166" font-size="10.5" fill="var(--ink-3)">arnés · no es dominio</text>
+
+  <!-- Tenants -->
+  <rect x="34" y="200" width="434" height="186" fill="var(--surface)" stroke="var(--c3)" stroke-width="1.5"/>
+  <text x="46" y="222" font-size="12" font-weight="600" fill="var(--c3)">39 tenants · uno por cliente</text>
+  <g font-size="10" fill="var(--ink-2)">
+    <rect x="46" y="236" width="88" height="52" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="56" y="253" font-size="10.5" font-weight="600" fill="var(--ink)">api-01</text>
+    <text x="56" y="268" font-size="9.5">1 vCPU · 2 GiB</text>
+    <text x="56" y="281" font-size="9.5">sg-tenant-01</text>
+    <rect x="46" y="296" width="88" height="34" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="56" y="311" font-size="10" font-weight="600" fill="var(--ink)">RDS db-01</text>
+    <text x="56" y="324" font-size="9">t4g.micro</text>
+
+    <rect x="146" y="236" width="88" height="52" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="156" y="253" font-size="10.5" font-weight="600" fill="var(--ink)">api-02</text>
+    <text x="156" y="268" font-size="9.5">1 vCPU · 2 GiB</text>
+    <text x="156" y="281" font-size="9.5">sg-tenant-02</text>
+    <rect x="146" y="296" width="88" height="34" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="156" y="311" font-size="10" font-weight="600" fill="var(--ink)">RDS db-02</text>
+    <text x="156" y="324" font-size="9">t4g.micro</text>
+
+    <text x="258" y="288" font-size="16" fill="var(--ink-3)">· · ·</text>
+
+    <rect x="300" y="236" width="88" height="52" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="310" y="253" font-size="10.5" font-weight="600" fill="var(--ink)">api-39</text>
+    <text x="310" y="268" font-size="9.5">1 vCPU · 2 GiB</text>
+    <text x="310" y="281" font-size="9.5">sg-tenant-39</text>
+    <rect x="300" y="296" width="88" height="34" fill="var(--ground)" stroke="var(--edge)"/>
+    <text x="310" y="311" font-size="10" font-weight="600" fill="var(--ink)">RDS db-39</text>
+    <text x="310" y="324" font-size="9">t4g.micro</text>
+  </g>
+  <text x="46" y="360" font-size="10" fill="var(--floor)">cada API solo alcanza SU base · regla de entrada al 5432 con origen el propio SG</text>
+  <text x="46" y="376" font-size="10" fill="var(--ink-3)">D-02 · el descarte ocurre en la interfaz de red, antes de tocar Postgres</text>
+
+  <!-- flechas ORQ -> tenants -->
+  <line x1="132" y1="178" x2="90" y2="234" stroke="var(--orq)" stroke-width="1.4" marker-end="url(#fl)" opacity=".8"/>
+  <line x1="150" y1="178" x2="190" y2="234" stroke="var(--orq)" stroke-width="1.4" marker-end="url(#fl)" opacity=".8"/>
+  <line x1="168" y1="178" x2="336" y2="234" stroke="var(--orq)" stroke-width="1.4" marker-end="url(#fl)" opacity=".8"/>
+  <text x="240" y="196" font-size="10" fill="var(--orq)">POST /events · 8080 · api-NN.poc.local</text>
+
+  <!-- VPC C4 -->
+  <rect x="700" y="52" width="264" height="352" fill="var(--c4-s)" stroke="var(--c4)" stroke-width="1.5"/>
+  <text x="714" y="76" font-size="12.5" font-weight="600" fill="var(--c4)">VPC C4 · operador neutro</text>
+  <text x="714" y="93" font-size="11" fill="var(--ink-3)">10.102.0.0/16 · 1 AZ</text>
+
+  <rect x="718" y="200" width="228" height="66" fill="var(--surface)" stroke="var(--c4)" stroke-width="1.5"/>
+  <text x="730" y="222" font-size="12" font-weight="600" fill="var(--c4)">consumidor × 2</text>
+  <text x="730" y="238" font-size="10.5" fill="var(--ink-3)">2 vCPU · 4 GiB cada una</text>
+  <text x="730" y="254" font-size="10.5" fill="var(--ink-3)">descifra · verifica · NO firma</text>
+
+  <rect x="718" y="296" width="228" height="52" fill="var(--surface)" stroke="var(--c4)" stroke-width="1.5"/>
+  <text x="730" y="316" font-size="11.5" font-weight="600" fill="var(--ink)">RDS c4-db · t4g.medium</text>
+  <text x="730" y="333" font-size="10" fill="var(--ink-3)">una sola base · 468 678 filas</text>
+  <line x1="832" y1="266" x2="832" y2="294" stroke="var(--c4)" stroke-width="1.4" marker-end="url(#flc4)"/>
+
+  <!-- La cola, FUERA de las dos VPC -->
+  <rect x="516" y="196" width="156" height="76" fill="var(--surface)" stroke="currentColor" stroke-width="2"/>
+  <text x="594" y="220" font-size="12" font-weight="600" text-anchor="middle">SQS FIFO</text>
+  <text x="594" y="237" font-size="10" text-anchor="middle" fill="var(--ink-3)">alto rendimiento</text>
+  <text x="594" y="252" font-size="10" text-anchor="middle" fill="var(--ink-3)">cifrada con KMS</text>
+  <text x="594" y="266" font-size="9.5" text-anchor="middle" fill="var(--ink-3)">+ DLQ</text>
+
+  <line x1="468" y1="234" x2="512" y2="234" stroke="var(--c3)" stroke-width="2" marker-end="url(#flc3)"/>
+  <line x1="676" y1="234" x2="714" y2="234" stroke="var(--c4)" stroke-width="2" marker-end="url(#flc4)"/>
+  <text x="490" y="226" font-size="9.5" fill="var(--c3)">envía</text>
+  <text x="682" y="226" font-size="9.5" fill="var(--c4)">recibe</text>
+
+  <!-- LA NO-RUTA -->
+  <line x1="490" y1="330" x2="700" y2="330" stroke="var(--floor)" stroke-width="1.6" stroke-dasharray="6 5"/>
+  <line x1="580" y1="312" x2="612" y2="348" stroke="var(--floor)" stroke-width="2.4"/>
+  <line x1="612" y1="312" x2="580" y2="348" stroke="var(--floor)" stroke-width="2.4"/>
+  <text x="596" y="372" font-size="10.5" text-anchor="middle" fill="var(--floor)" font-weight="600">sin peering · sin TGW · sin PrivateLink</text>
+  <text x="596" y="388" font-size="10" text-anchor="middle" fill="var(--ink-3)">ninguna tabla de rutas nombra el CIDR de la otra</text>
+
+  <text x="16" y="32" font-size="11.5" fill="var(--ink-3)">cuenta 276076558677 · us-west-2 · 616 recursos de Terraform</text>
+</svg>
+    <div class="key">
+      <span><i style="background:var(--c3-s);border-color:var(--c3)"></i>VPC C3 · participante</span>
+      <span><i style="background:var(--c4-s);border-color:var(--c4)"></i>VPC C4 · operador neutro</span>
+      <span><i style="background:var(--orq-s);border-color:var(--orq)"></i>arnés de prueba</span>
+    </div>
+    <figcaption>La cola está dibujada fuera de las dos VPC a propósito: cada dominio la alcanza por
+    su propio interface endpoint, no por una ruta hacia el otro.</figcaption>
+  </figure>
+
+  <div class="note">
+    <h3>Por qué el orquestador NO tiene VPC propia</h3>
+    <p>Dársela obligaba a un <strong>peering</strong> para que alcanzara a los tenants. Y un peering
+    es exactamente la clase de ruta que alguien podría replicar después hacia C4. Sin VPC de ORQ no
+    hay peering en toda la PoC, y «no hay camino» deja de depender de que nadie toque una tabla de
+    rutas.</p>
+    <p>El precio: el arnés comparte VPC con el participante. Se acepta porque <strong>ORQ es
+    andamio</strong>, no un dominio de confianza — y su security group no aparece en el ingress al
+    5432 de ningún tenant, así que no alcanza ninguna base.</p>
+  </div>
+</section>
+
+<section>
+  <h2>El inventario completo</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>recurso</th><th>uds</th><th>por qué esa cantidad</th></tr></thead>
+      <tbody>
+        <tr><td>Reglas de SG · tenant desde bastión</td><td>78</td><td>2 puertos × 39 tenants · 8080 y 5432</td></tr>
+        <tr><td>Servicios ECS · API de tenant</td><td>39</td><td>uno por cliente · <code>for_each</code>, nunca 39 bloques copiados</td></tr>
+        <tr><td>Registros Cloud Map · <code>api-NN</code></td><td>39</td><td>el orquestador resuelve por nombre, no por IP</td></tr>
+        <tr><td>Instancias RDS de tenant</td><td>39</td><td>una por cliente · aislamiento real, no lógico</td></tr>
+        <tr><td>Log groups</td><td>41</td><td>39 API + C4 + orquestador</td></tr>
+        <tr><td>Security groups de tenant</td><td>39</td><td>D-02 · uno por cliente, auto-referenciado</td></tr>
+        <tr><td>Reglas de SG por tenant</td><td>39 × 4</td><td>entrada 5432 propia, entrada 8080 desde ORQ, salida 443 y S3</td></tr>
+        <tr><td>Interface endpoints</td><td>14</td><td>7 servicios × 2 VPC · ECR ×2, KMS, SQS, Secrets, Logs, SSM</td></tr>
+        <tr><td>Gateway endpoint de S3</td><td>2</td><td>uno por VPC · <b>gratis, y es el que se olvida</b></td></tr>
+        <tr><td>Subredes</td><td>6</td><td>app ×1 AZ y datos ×2 · RDS exige 2 AZ aunque sea Single-AZ</td></tr>
+        <tr><td>VPC</td><td>2</td><td>un dominio de confianza cada una</td></tr>
+        <tr><td>Clústeres ECS</td><td>3</td><td>C3, C4 y ORQ · agrupación lógica, no frontera de red</td></tr>
+        <tr><td>Llaves KMS</td><td>4</td><td>firma, HMAC, mensajes, cola</td></tr>
+        <tr><td>Colas SQS FIFO</td><td>4</td><td>despliegue + DLQ, y otro par para desarrollo local</td></tr>
+        <tr><td>Repos ECR</td><td>3</td><td>c3-api, c4-consumer, orq-driver · todos ARM64</td></tr>
+        <tr><td>Bastiones</td><td>2</td><td><code>t4g.nano</code>, uno por VPC · sin reglas de entrada</td></tr>
+        <tr><td>Secreto</td><td>1</td><td>una contraseña para las 40 bases, a propósito</td></tr>
+        <tr class="tot"><td>Total en el estado de Terraform</td><td>616</td><td>de un solo root module</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note ok-note">
+    <h3>Una sola contraseña para las 40 bases, y es deliberado</h3>
+    <p>Hace <strong>concluyente</strong> la prueba de aislamiento. Con contraseñas distintas, un
+    security group mal asignado daría «password authentication failed» y se confundiría con un
+    problema de credenciales. Con la misma clave, si el aislamiento está roto el <code>select 1</code>
+    simplemente <strong>funciona</strong> — y eso no se puede malinterpretar.</p>
+    <p>De paso ahorra ~$19,60/mes de Secrets Manager a escala de 50 tenants.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Las cuatro llaves · dónde vive el invariante</h2>
+  <p class="col">El Proof Ledger se sostiene sobre una asimetría: quien firma no descifra, y quien
+  descifra no puede firmar. Eso no está en el código de las aplicaciones — está en las policies
+  de KMS, donde no se puede saltar con un despliegue.</p>
+  <figure>
+    <svg class="dia" viewBox="0 0 900 300" role="img" aria-label="Cuatro llaves de KMS. C3 puede firmar y cifrar pero no descifrar; C4 puede descifrar y leer la publica pero no puede firmar. Esa asimetria es el invariante del Proof Ledger.">
+  <defs>
+    <marker id="k1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--c3)"/></marker>
+    <marker id="k2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--c4)"/></marker>
+  </defs>
+
+  <rect x="20" y="70" width="150" height="150" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.5"/>
+  <text x="95" y="96" font-size="13" font-weight="600" text-anchor="middle" fill="var(--c3)">C3</text>
+  <text x="95" y="114" font-size="10.5" text-anchor="middle" fill="var(--ink-3)">participante</text>
+  <text x="95" y="150" font-size="11" text-anchor="middle" fill="var(--ink)">firma</text>
+  <text x="95" y="168" font-size="11" text-anchor="middle" fill="var(--ink)">cifra</text>
+  <text x="95" y="192" font-size="11" text-anchor="middle" fill="var(--floor)">no descifra</text>
+
+  <rect x="730" y="70" width="150" height="150" fill="var(--c4-s)" stroke="var(--c4)" stroke-width="1.5"/>
+  <text x="805" y="96" font-size="13" font-weight="600" text-anchor="middle" fill="var(--c4)">C4</text>
+  <text x="805" y="114" font-size="10.5" text-anchor="middle" fill="var(--ink-3)">operador neutro</text>
+  <text x="805" y="150" font-size="11" text-anchor="middle" fill="var(--ink)">descifra</text>
+  <text x="805" y="168" font-size="11" text-anchor="middle" fill="var(--ink)">verifica</text>
+  <text x="805" y="192" font-size="11" text-anchor="middle" fill="var(--floor)" font-weight="600">NO PUEDE FIRMAR</text>
+
+  <g font-size="10.5">
+    <rect x="240" y="46" width="420" height="40" fill="var(--surface)" stroke="var(--edge)"/>
+    <text x="252" y="63" font-size="11" font-weight="600" fill="var(--ink)">firma_c3 · Ed25519 asimétrica</text>
+    <text x="252" y="78" font-size="9.5" fill="var(--ink-3)">9c2ba3c2… · una llamada Sign por documento · 6 ms · $0,15/10k</text>
+    <line x1="172" y1="66" x2="236" y2="66" stroke="var(--c3)" stroke-width="1.6" marker-end="url(#k1)"/>
+    <text x="204" y="59" font-size="9" text-anchor="middle" fill="var(--c3)">Sign</text>
+    <line x1="664" y1="66" x2="726" y2="66" stroke="var(--c4)" stroke-width="1.6" marker-end="url(#k2)" stroke-dasharray="4 3"/>
+    <text x="695" y="59" font-size="9" text-anchor="middle" fill="var(--c4)">GetPublicKey</text>
+
+    <rect x="240" y="100" width="420" height="40" fill="var(--surface)" stroke="var(--edge)"/>
+    <text x="252" y="117" font-size="11" font-weight="600" fill="var(--ink)">hmac_c3 · HMAC-SHA256</text>
+    <text x="252" y="132" font-size="9.5" fill="var(--ink-3)">83695b89… · pseudonimiza el tenant en party_id · una vez al arrancar</text>
+    <line x1="172" y1="120" x2="236" y2="120" stroke="var(--c3)" stroke-width="1.6" marker-end="url(#k1)"/>
+
+    <rect x="240" y="154" width="420" height="40" fill="var(--surface)" stroke="var(--edge)"/>
+    <text x="252" y="171" font-size="11" font-weight="600" fill="var(--ink)">mensajes_c4 · simétrica</text>
+    <text x="252" y="186" font-size="9.5" fill="var(--ink-3)">f8940502… · C3 solo GenerateDataKey · una cada 100 eventos</text>
+    <line x1="172" y1="174" x2="236" y2="174" stroke="var(--c3)" stroke-width="1.6" marker-end="url(#k1)"/>
+    <text x="204" y="167" font-size="9" text-anchor="middle" fill="var(--c3)">GenDataKey</text>
+    <line x1="664" y1="174" x2="726" y2="174" stroke="var(--c4)" stroke-width="1.6" marker-end="url(#k2)"/>
+    <text x="695" y="167" font-size="9" text-anchor="middle" fill="var(--c4)">Decrypt</text>
+
+    <rect x="240" y="208" width="420" height="40" fill="var(--surface)" stroke="var(--edge)"/>
+    <text x="252" y="225" font-size="11" font-weight="600" fill="var(--ink)">cola_c4 · simétrica</text>
+    <text x="252" y="240" font-size="9.5" fill="var(--ink-3)">18803e57… · cifrado en reposo de la cola y su DLQ</text>
+  </g>
+
+  <text x="450" y="278" font-size="10.5" text-anchor="middle" fill="var(--floor)">verificado con simulate-principal-policy: el rol de C4 sobre kms:Sign → implicitDeny</text>
+  <text x="450" y="28" font-size="12" text-anchor="middle" font-weight="600" fill="var(--ink)">La asimetría es el invariante, y vive en las policies de KMS</text>
+</svg>
+    <figcaption>Comprobado con <code>iam simulate-principal-policy</code> sobre el rol real: C4
+    contra <code>kms:Sign</code> da <code>implicitDeny</code>, y contra <code>kms:GetPublicKey</code>
+    da <code>allowed</code> — que es justo lo que le permite verificar 468 678 firmas sin poder
+    producir ni una.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>El camino de un documento</h2>
+  <p class="col">Con los tiempos que midió la corrida de 600 segundos, no con estimaciones.</p>
+  <figure>
+    <svg class="dia" viewBox="0 0 960 250" role="img" aria-label="Recorrido de un documento con los tiempos medidos: C3 tarda 263 milisegundos de los cuales 227 son esperando al relay, la cola 23 y C4 40, para un total de 326 milisegundos.">
+  <defs>
+    <marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <g font-size="10.5">
+    <rect x="14" y="60" width="104" height="56" fill="var(--orq-s)" stroke="var(--orq)" stroke-width="1.4"/>
+    <text x="66" y="82" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--orq)">orquestador</text>
+    <text x="66" y="98" font-size="9.5" text-anchor="middle" fill="var(--ink-3)">materializa</text>
+    <text x="66" y="110" font-size="9" text-anchor="middle" fill="var(--ink-3)">5 s por delante</text>
+
+    <rect x="146" y="60" width="86" height="56" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.4"/>
+    <text x="189" y="80" font-size="10" font-weight="600" text-anchor="middle" fill="var(--ink)">canoniza</text>
+    <text x="189" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">JCS · e0→e1</text>
+    <text x="189" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">&lt;1 ms</text>
+
+    <rect x="252" y="60" width="86" height="56" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.4"/>
+    <text x="295" y="80" font-size="10" font-weight="600" text-anchor="middle" fill="var(--ink)">firma</text>
+    <text x="295" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">KMS · e1→e2</text>
+    <text x="295" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">6 ms</text>
+
+    <rect x="358" y="60" width="86" height="56" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.4"/>
+    <text x="401" y="80" font-size="10" font-weight="600" text-anchor="middle" fill="var(--ink)">cifra + commit</text>
+    <text x="401" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">e2→e4</text>
+    <text x="401" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">8 ms</text>
+
+    <rect x="464" y="60" width="118" height="56" fill="var(--floor-soft)" stroke="var(--floor)" stroke-width="2"/>
+    <text x="523" y="80" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--floor)">espera al relay</text>
+    <text x="523" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">e4→e5 · en el outbox</text>
+    <text x="523" y="109" font-size="12" font-weight="600" text-anchor="middle" fill="var(--floor)">227 ms</text>
+
+    <rect x="602" y="60" width="86" height="56" fill="var(--c3-s)" stroke="var(--c3)" stroke-width="1.4"/>
+    <text x="645" y="80" font-size="10" font-weight="600" text-anchor="middle" fill="var(--ink)">publica</text>
+    <text x="645" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">SQS · e5→e6</text>
+    <text x="645" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">16 ms</text>
+
+    <rect x="708" y="60" width="76" height="56" fill="var(--surface)" stroke="currentColor" stroke-width="1.6"/>
+    <text x="746" y="80" font-size="10" font-weight="600" text-anchor="middle">cola</text>
+    <text x="746" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">e6→e7</text>
+    <text x="746" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">23 ms</text>
+
+    <rect x="804" y="60" width="142" height="56" fill="var(--c4-s)" stroke="var(--c4)" stroke-width="1.4"/>
+    <text x="875" y="80" font-size="10" font-weight="600" text-anchor="middle" fill="var(--ink)">descifra · verifica · persiste</text>
+    <text x="875" y="94" font-size="9" text-anchor="middle" fill="var(--ink-3)">e7→e10</text>
+    <text x="875" y="108" font-size="10" text-anchor="middle" fill="var(--ok)">40 ms</text>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" marker-end="url(#p1)" opacity=".55">
+    <line x1="120" y1="88" x2="142" y2="88"/><line x1="234" y1="88" x2="248" y2="88"/>
+    <line x1="340" y1="88" x2="354" y2="88"/><line x1="446" y1="88" x2="460" y2="88"/>
+    <line x1="584" y1="88" x2="598" y2="88"/><line x1="690" y1="88" x2="704" y2="88"/>
+    <line x1="786" y1="88" x2="800" y2="88"/>
+  </g>
+
+  <line x1="146" y1="146" x2="444" y2="146" stroke="var(--c3)" stroke-width="2"/>
+  <text x="295" y="163" font-size="10" text-anchor="middle" fill="var(--c3)">C3 contesta 202 aquí · el cliente espera 29 ms</text>
+  <line x1="146" y1="188" x2="688" y2="188" stroke="var(--c3)" stroke-width="2" opacity=".55"/>
+  <text x="417" y="205" font-size="10" text-anchor="middle" fill="var(--ink-2)">C3 completo · 263 ms · el 86 % es espera</text>
+  <line x1="146" y1="224" x2="946" y2="224" stroke="var(--ok)" stroke-width="2.4"/>
+  <text x="546" y="241" font-size="11.5" text-anchor="middle" fill="var(--ok)" font-weight="600">extremo a extremo · 326 ms · mediana de 468 678 documentos</text>
+
+  <text x="14" y="34" font-size="12" font-weight="600" fill="var(--ink)">Dónde se va el tiempo — el trabajo criptográfico es lo más barato</text>
+</svg>
+    <figcaption>Mediana por documento sobre 468 678. Las marcas <code>e0</code>–<code>e6</code> las
+    escribe C3 en su outbox y <code>e7</code>–<code>e10</code> las escribe C4 en su inbox, cada uno
+    con su propio reloj.</figcaption>
+  </figure>
+
+  <div class="note">
+    <h3>El cuello de botella no es criptografía: es un temporizador</h3>
+    <p>Firmar cuesta <strong>6 ms</strong>. Esperar a que el relay recoja la fila cuesta
+    <strong>227</strong>, el 86 % de C3. Y no crece con la carga: el relay despierta cada
+    <code>OUTBOX_POLL_MS = 500</code>, así que una fila espera de media medio periodo — 250 ms
+    teóricos, 227 medidos, y los 39 tenants dieron entre 221 y 236.</p>
+    <p>Bajarlo a 100 ms recortaría ~180 ms del extremo a extremo sin tocar arquitectura.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Cómo se entra · dos bastiones, cero puertos abiertos</h2>
+  <p class="col">Ninguna task tiene IP pública y ninguna RDS tiene endpoint público. La puerta es
+  un bastión por VPC, y <strong>no expone nada</strong>: no tiene reglas de entrada. Se entra por
+  Session Manager, que es una sesión <em>saliente</em> del agente autorizada por IAM. Un
+  <code>nmap</code> contra su IP no encuentra nada.</p>
+
+  <div class="grid3">
+    <div><span class="n">2</span><span class="lab">bastiones · uno por VPC</span>
+      <span class="sub">Son dos porque la RDS de C4 está en la VPC de C4 y no hay ruta desde C3.
+      Eso es el invariante, no un obstáculo a rodear.</span></div>
+    <div><span class="n">$0,48/día</span><span class="lab">y es plano</span>
+      <span class="sub">El mismo precio con 1 tenant que con 200. La alternativa —IP pública en cada
+      task y cada RDS— serían $12,36/día con 50 tenants y 100 endpoints en internet.</span></div>
+    <div><span class="n">18000+NN</span><span class="lab">los puertos se derivan</span>
+      <span class="sub"><code>sh tunel api 37</code> sale en 18037 y <code>db 37</code> en 15437.
+      Con 39 clientes no hay lista que mantener.</span></div>
+  </div>
+
+  <div class="note">
+    <h3>Lo que el bastión t4g.nano no aguanta</h3>
+    <p>Para uso normal —un túnel, trabajar, cerrarlo— sobra. Lo que <strong>no</strong> aguanta es
+    rotación rápida de sesiones: recorrer las 39 bases abriendo y cerrando túneles tumba a su
+    agente de SSM, que se desconecta y vuelve al cabo de medio minuto.</p>
+    <p>Y el error no ayuda: <code>TargetNotConnected</code> <strong>no dice que el problema sea el
+    agente</strong>. Parece que las bases no responden y te manda a mirar RDS o los security groups.
+    Medido: de 39 bases fallaron las 31 primeras y funcionaron las 8 últimas, justo cuando el agente
+    ya había vuelto.</p>
+  </div>
+</section>
+
+<section>
+  <h2>El interruptor · T-07</h2>
+  <p class="col">Entre corridas esto se <strong>apaga</strong>, no se destruye. Una variable,
+  <code>desired_count</code>, gobierna el cómputo y los endpoints a la vez.</p>
+  <div class="eq">
+    <b>encendido</b> &nbsp;39 tenants + 2 C4 + 1 ORQ &nbsp;·&nbsp; 14 ENIs de endpoint &nbsp;·&nbsp; 40 RDS
+      &nbsp;→&nbsp; <b>$66,55/día</b><br>
+    <b>apagado</b> &nbsp;cómputo 0 &nbsp;·&nbsp; endpoints 0 &nbsp;·&nbsp; <span style="color:var(--floor)">RDS destruidas</span>
+      &nbsp;→&nbsp; <b class="ok">$0,63/día</b><br>
+    <b>sin acceso externo</b> &nbsp;además sin bastiones ni IGW &nbsp;→&nbsp; <b class="ok">$0,14/día</b><br>
+    <span style="color:var(--ink-3)">conserva en los tres casos: las 2 VPC, las 4 llaves, las colas, ECR y el bucket de exportación</span>
+  </div>
+
+  <div class="note">
+    <h3>⚠ RDS no escala a cero</h3>
+    <p>Fargate baja a cero en segundos; una base de datos no. La única forma de no pagarla es
+    <strong>destruir la instancia</strong>, así que apagar con <code>rds_persistente = false</code>
+    <strong>borra los datos</strong>. Conservarlas costaría $19,56/día solo de RDS.</p>
+    <p>Es la decisión que hay que tomar conscientemente al final de cada corrida: exportar a S3
+    antes, o aceptar que las filas crudas se van.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Lo que este despliegue NO demuestra</h2>
+  <p class="col">Decirlo de entrada evita que alguien lo descubra en la demo.</p>
+  <div class="grid3">
+    <div><span class="lab">Alta disponibilidad</span>
+      <span class="sub">Las 40 bases son Single-AZ, sin backups (<code>backup_retention_period = 0</code>)
+      y sin snapshot final. Sobreviven a que muera una tarea de Fargate; no a mucho más.</span></div>
+    <div><span class="lab">Aislamiento de cuenta</span>
+      <span class="sub">El aislamiento entre tenants es por security group dentro de una VPC
+      compartida, no por cuenta ni por VPC. Es real y se hace cumplir en la interfaz de red, pero
+      no es una frontera de facturación ni de IAM.</span></div>
+    <div><span class="lab">El orquestador como producto</span>
+      <span class="sub">Es arnés de prueba. Desaparece con la corrida y no debe citarse como parte
+      del diseño.</span></div>
+    <div><span class="lab">Dos cuentas AWS</span>
+      <span class="sub">El diseño asume <code>c3-dev</code> y <code>c4-dev</code> separadas. Aquí es
+      una sola, así que el invariante C3/C4 se sostiene con IAM y topología, no con frontera de
+      cuenta.</span></div>
+  </div>
+</section>
+
+<footer>
+  Inventario tomado del estado de Terraform el 2026-09-01, con el despliegue de 39 tenants vivo ·
+  root module <code>terraform/oneClient</code> · <code>az_count = 1</code> ·
+  <code>acceso_externo = true</code><br>
+  La corrida que produjo los tiempos: <code>test-deploy-39clients-600s-6-10-1-4</code> — 600 s,
+  781 ev/s, 468 678 documentos, informe completo en <code>docs/runs/</code>.<br>
+  Los identificadores de llaves y colas son los reales de la cuenta; las bases se destruyeron al
+  apagar (<code>rds_persistente = false</code>).
+</footer>
+
+</div>

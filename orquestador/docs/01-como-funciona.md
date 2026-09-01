@@ -210,6 +210,36 @@ el segundo (`s.docs = null`), que cubre lo que nunca llegó a enviarse.
 Se materializa **un solo segundo por tick**. Construir los cinco de golpe haría
 que ese tick tardara cinco veces más y pudiera llegar tarde a disparar.
 
+### ⚠ `occurred_at` se fija AQUÍ, no al enviar — y eso invalida una medición obvia
+
+`pool.materializar()` pone `occurred_at: new Date().toISOString()` en el
+momento en que construye el cuerpo, que es **hasta cinco segundos antes** de que
+el documento salga por el cable.
+
+Ese campo viaja dentro del payload firmado y acaba en `c4.inbox`, así que es
+tentador restarlo de `e10_persistido` y llamar a eso «extremo a extremo». **No
+lo es.** Medido en la corrida de 39 tenants del 2026-09-01:
+
+```
+occurred_at → e10_persistido    5 643 ms   ← la ventana de materialización
+occurred_at → sqs_enviado       5 588 ms      inflando el número
+                                 ─ 5 000 ms de VENTANA_MATERIALIZACION
+e0_listo    → e6_publicado        263 ms   ← C3, medido dentro de C3
+e6          → e7_recibido          23 ms      la cola
+e7          → e10_persistido       40 ms      C4, medido dentro de C4
+                                  ───────
+extremo a extremo real            326 ms
+```
+
+Un factor **17** de diferencia. Y no es desfase de reloj: un desfase habría
+desplazado también el mínimo observado, y el mínimo fue **173 ms** — un
+documento materializado justo antes de salir.
+
+**Para medir latencia, usa las marcas `e0`–`e10`, que las escriben C3 y C4 con
+sus propios relojes.** `occurred_at` es un campo de negocio del documento, no
+un instrumento de medida — igual que dice la regla 8, las marcas de tiempo de
+medición nunca van dentro del payload.
+
 ---
 
 ## 4 · El disparo, cada 10 ms

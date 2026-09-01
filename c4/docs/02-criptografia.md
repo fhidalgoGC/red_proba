@@ -150,3 +150,22 @@ C4:
 kms sign        --key-id <firma_c3>   DEBE dar AccessDenied
 kms get-public-key --key-id <firma_c3>   DEBE funcionar
 ```
+
+
+---
+
+## Medido · la caché de data keys en cifras
+
+C3 pide una data key cada 100 eventos (`C3_EVENTOS_POR_DATA_KEY`) y la reutiliza,
+así que sin caché C4 gastaría un `Decrypt` **por mensaje** para obtener N veces
+la misma clave. Con la caché es uno por lote.
+
+En la corrida de 468 678 documentos eso fueron **~4 687 llamadas a `Decrypt`**
+en vez de 468 678 — un factor 100. En coste, $0,014 en vez de $1,41; en
+latencia, lo que se ahorró es más: cada llamada a KMS ronda los 20-40 ms y el
+tramo `e7→e8` completo salió en **1 ms** de mediana.
+
+⚠ La caché tiene tope (`MAX_CACHE = 64`). Con 39 tenants rotando claves de forma
+independiente cabe de sobra; a 200 tenants habría que revisarlo, porque una
+caché que expulsa entradas antes de reusarlas es una caché que no sirve para
+nada y solo añade una indirección.

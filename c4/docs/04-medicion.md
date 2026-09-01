@@ -431,3 +431,66 @@ de reusar la data key o el caché está desalojando demasiado pronto.
 
 Los contadores del resumen viven **en memoria** y se pierden al reiniciar. Los
 que responden P4 están en la base.
+
+
+---
+
+## Medido · 39 tenants, 781 msg/s, 600 s
+
+Corrida `test-deploy-39clients-600s-6-10-1-4` del 2026-09-01. Dos réplicas de
+`db.t4g.medium`, `c4_concurrencia = 8`, `c4_lote_transaccion = true`.
+
+| tramo | | p50 | p99 |
+|---|---|---|---|
+| `e6→e7` | espera en la cola SQS | **23 ms** | 253 ms |
+| `e7→e8` | descifrar | 1 ms | — |
+| `e8→e9` | **verificar la firma Ed25519** | **1 ms** | — |
+| `e9→e10` | persistir en el inbox | 24 ms | — |
+| | **C4 completo** | **70 ms** | 345 ms |
+
+**C4 no fue el cuello de botella en ningún momento.** La cola terminó en
+**0 mensajes** dentro de la misma ventana de diez minutos: consumió al mismo
+ritmo al que llegaba, sin acumular. La profundidad osciló entre 5 y 57 mensajes
+durante toda la corrida.
+
+Verificar la firma de cada uno de los 468 678 documentos costó **1 milisegundo**.
+El invariante del Proof Ledger —que C4 pueda comprobar sin poder firmar— no
+tiene coste apreciable.
+
+### Entrega exacta
+
+| | |
+|---|---|
+| Documentos en el inbox | **468 678** |
+| Suma de los 39 outboxes de C3 | **468 678** |
+| Diferencia | **0** |
+| Duplicados | 0 · `recepciones_max = 1` |
+| En la DLQ | 0 |
+
+**Cero pérdida entre C3 y C4.** Y `recepciones_max = 1` dice algo más: SQS no
+reentregó ni un mensaje, así que la corrida **no ejercitó la idempotencia del
+inbox** — está ahí, pero no se probó bajo esta carga.
+
+### Los 66 que aparecieron de más
+
+El inbox acabó con **66 documentos más de los que el orquestador contó como
+`ok`**. No es un error de conteo: son peticiones que dieron
+`UND_ERR_HEADERS_TIMEOUT` en el arnés. C3 las procesó enteras y publicó sus
+documentos; el orquestador simplemente dejó de esperar la respuesta.
+
+Es la razón por la que la conciliación se hace contra **las bases** y no contra
+el informe del arnés: un timeout del cliente no significa que el trabajo no se
+hiciera.
+
+### Consumo y memoria
+
+| | |
+|---|---|
+| Conexiones a su RDS (máx.) | 16 |
+| Memoria libre (mín.) | 1 953 MB de 4 GiB |
+| Tamaño por fila del inbox | **722 B** con índices |
+| Disco usado por la corrida | ~330 MB de 20 GB |
+
+Dos réplicas sostuvieron ~390 msg/s cada una. El aviso de `c4_replicas` sigue
+en pie —más réplicas no arreglan el lazo si el consumidor procesa de uno en
+uno— pero con `concurrencia = 8` el caudal no fue el límite.

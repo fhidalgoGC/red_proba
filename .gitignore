@@ -11,6 +11,9 @@ dist-test/
 *.tfplan
 terraform.tfstate
 terraform.tfstate.*
+# Lock transitorio de un apply en curso. Nunca se commitea: si entrara, un
+# clon nuevo creeria que hay una operacion en vuelo y se negaria a aplicar.
+.terraform.tfstate.lock.info
 crash.log
 estado.auto.tfvars
 clientes.auto.tfvars

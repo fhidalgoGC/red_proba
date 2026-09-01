@@ -13,6 +13,10 @@ y un relay los publica en la cola FIFO de C4.
 > publicado en
 > [claude.ai](https://claude.ai/code/artifact/6048693b-e9d9-45d1-9b8b-e2c8ab048a37).
 
+
+> **Resultados medidos** — la corrida de 39 tenants a 781 ev/s del 2026-09-01,
+> con el informe navegable y los datos crudos: [docs/runs/](../../docs/runs/README.md).
+
 ---
 
 ## Los documentos

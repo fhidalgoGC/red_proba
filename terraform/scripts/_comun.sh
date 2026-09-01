@@ -13,6 +13,15 @@ ambar() { printf '\033[33m%s\033[0m\n' "$*"; }
 paso()  { printf '\n\033[1m══> %s\033[0m\n' "$*"; }
 
 # Valida el argumento de escenario y deja $DIR listo.
+#
+# ⚠ SE EXIGE QUE HAYA .tf, no solo que exista la carpeta.
+#
+#   `50client/` existe y es un runbook, no un root module: la corrida de 50 se
+#   hace sobre `oneClient` subiendo var.tenants (ver 50client/README.md). Con la
+#   comprobacion antigua -solo `-d`- pasaba la validacion y tofu arrancaba en una
+#   carpeta sin configuracion: `init` decia "Terraform initialized in an empty
+#   directory" y el `apply` que venia detras informaba "No changes". Cero
+#   recursos, cero errores, y la lectura obvia es "ya estaba todo aplicado".
 escenario() {
   local e="${1:-}"
   case "$e" in
@@ -22,6 +31,15 @@ escenario() {
   ESC="$e"
   DIR="$RAIZ/$e"
   [ -d "$DIR" ] || { rojo "no existe $DIR"; exit 1; }
+  if ! compgen -G "$DIR"/*.tf > /dev/null; then
+    rojo "$e/ no tiene ningun .tf — no es un root module."
+    echo
+    ambar "la corrida de 50 se hace sobre oneClient, subiendo var.tenants:"
+    echo "    sh terraform:deploy --clients 50 --az 1"
+    echo
+    echo "  por que:  $RAIZ/$e/README.md"
+    exit 1
+  fi
   cd "$DIR"
 }
 

@@ -112,6 +112,32 @@ variable "c4_replicas" {
   }
 }
 
+variable "orq_manifiesto_tope" {
+  type        = number
+  default     = null
+  description = <<-D
+    Expedientes distintos que guarda el manifiesto de O-08 antes de omitir.
+    `null` = manda el default del codigo (200.000).
+
+    ⚠ ES LA PERILLA QUE HAY QUE TOCAR AL SUBIR DE TENANTS, y la que no avisa.
+      El tope se gasta en eventos, no en tiempo, asi que la duracion util de
+      una corrida se divide entre el numero de tenants:
+
+        1 tenant  ·    40 ev/s  →  83 min de margen   (por eso nunca se vio)
+        50 tenants · 2.000 ev/s →  1,6 min
+
+      Pasado el tope el manifiesto sale `truncado: true` y la conciliacion se
+      niega a dar `ok` — la corrida entera queda sin responder P4 aunque todos
+      los eventos hayan llegado bien.
+
+    Para una corrida de 30 min a 2.000 ev/s hacen falta ~3.600.000. Son unos
+    790 MB de heap, dentro de los 6.144 MB que declara la task.
+
+    La alternativa sin memoria: `eventos_por_hilo: 10` en el cuerpo del batch,
+    que divide los expedientes por diez.
+  D
+}
+
 variable "imagen_tag" {
   type        = string
   description = "Tag de las imagenes en ECR. 'humo' para las prestadas."

@@ -105,6 +105,7 @@ eso es peor que no arrancar.
 | `ORQ_LOGS_DIR` | `../logs` | Dónde escribir los informes |
 | `ORQ_TENANTS_JSON` | — | La lista de destinos, con **la misma forma que `tenants.yaml`**. Reemplaza al archivo |
 | `ORQ_PERFIL_JSON` | — | El perfil, con la misma forma que `perfil.yaml`. Reemplaza al archivo |
+| `ORQ_MANIFIESTO_TOPE` | 200 000 | Expedientes distintos que guarda el manifiesto de O-08 antes de **omitir**. ⚠ Es el que deja P4 sin respuesta — ver abajo |
 
 Las dos son **independientes**: se puede inyectar la lista de destinos y dejar
 que el perfil siga viniendo del YAML. Es exactamente lo que hace Terraform —los
@@ -159,3 +160,37 @@ No son configurables, pero conviene conocerlas.
 | `ASIENTO_MS` | 2.000 | registro | Espera mínima tras el fin antes de cerrar |
 | `TOPE_CONEXIONES` | 2.048 | corrida | Sockets por destino, para que un `concurrency` enorme no los agote |
 | `RESERVA_RELLENO` | 8 B | payload | Para que `sequence` pueda crecer a nueve dígitos |
+
+
+---
+
+## `ORQ_MANIFIESTO_TOPE` — la perilla que no avisa
+
+El manifiesto de O-08 guarda un objeto por **expediente** para poder responder
+P4. Con `eventos_por_hilo: 1` cada evento es su propio expediente, así que el
+tope no se gasta en tiempo: se gasta en **eventos**. La duración útil de una
+corrida se divide entre el ritmo:
+
+| | ritmo | el tope de 200 000 dura |
+|---|---|---|
+| 1 tenant | 40 ev/s | 83 min — por eso nunca se vio |
+| 39 tenants | 780 ev/s | **4 min** |
+| 50 tenants | 2 000 ev/s | **1,6 min** |
+
+Pasado el tope, el manifiesto sale con `truncado: true` y **la conciliación se
+niega a dar `ok`** (`conciliacion/conciliar.ts`): la corrida entera queda con
+asterisco aunque todos los eventos hayan llegado bien. No hay error, no hay log,
+no hay nada que lo anuncie hasta que concilias.
+
+**Cuánto poner:** son ~220 bytes por expediente en el heap. Para la corrida de
+600 s a 780 ev/s se usó `1 000 000` (~103 MB); una hora al mismo ritmo necesita
+**3 500 000** (~770 MB), y la task declara 6 144 MB de heap
+(`--max-old-space-size`), así que cabe.
+
+**La alternativa sin memoria** es `eventos_por_hilo: 10` en el cuerpo del batch:
+divide los expedientes por diez sin tocar nada más.
+
+En AWS lo inyecta Terraform desde `var.orq_manifiesto_tope`
+(`terraform/oneClient/variables.tf`). Con `null` no se inyecta y manda el
+default del código — que es su único sitio, para que no haya dos defaults que
+puedan divergir.

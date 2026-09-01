@@ -11,6 +11,10 @@ Termina cuando el evento queda guardado en el Postgres de C4 — ese COMMIT es
 > servidor ni conexión. También publicado en
 > [claude.ai](https://claude.ai/code/artifact/80828c05-58ef-4586-9ad8-80bb80d0a344).
 
+
+> **Resultados medidos** — la corrida de 39 tenants a 781 ev/s del 2026-09-01,
+> con el informe navegable y los datos crudos: [docs/runs/](../../docs/runs/README.md).
+
 ---
 
 ## Los documentos

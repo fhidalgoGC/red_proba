@@ -88,7 +88,7 @@ Las tres ausentes activan el **modo local** — ver
 | Variable | Por defecto | Qué hace |
 |---|---|---|
 | `C3_ESQUEMA` | `c3` | esquema dentro de la base del tenant |
-| `C3_BD_POOL` | `10` | conexiones del pool |
+| `C3_BD_POOL` | `10` | conexiones del pool. ⚠ **Es el techo real de C3 bajo carga** — ver abajo |
 | `C3_EVENTOS_POR_DATA_KEY` | `100` | cuántos eventos comparten una data key |
 | `OUTBOX_POLL_MS` | `500` | cada cuánto despierta el relay |
 | `OUTBOX_BATCH_SIZE` | `10` | filas por tick. **Tope de `SendMessageBatch`: 10** |
@@ -121,3 +121,54 @@ de que un Postgres murió, y con el outbox caído C3 no puede entregar nada.
 **Lo que hay que mirar no es el `ok`.** Si `relay.ocupado` se queda en `true`
 para siempre, el relay se congeló y los eventos se acumulan en silencio — con
 el health en verde. Y `pausado_ms > 0` significa circuit breaker abierto.
+
+
+---
+
+## `C3_BD_POOL` — el número que decide cuánto aguanta C3
+
+Medido el 2026-09-01 con 39 tenants a 781 ev/s durante 600 s: **43 errores
+`500`, todos del mismo tenant**, y la métrica que lo explica es una sola.
+
+| | `tenant-01` | los otros 38 |
+|---|---|---|
+| Conexiones simultáneas (máx.) | **10,0** ← exactamente `C3_BD_POOL` | 3,0 |
+| Filas en su tabla de outbox | 81 464 | 11 745 – 12 422 |
+| CPU de su RDS (máx.) | 18,7 % | 8,2 % |
+| Espera en el outbox · p99 | **12 481 ms** | 473 – 480 ms |
+
+`tenant-01` era el único que arrastraba el outbox de una corrida anterior —
+**siete veces más filas**—, lo que encarece la consulta de reclamo del relay y
+hace que retenga conexiones más tiempo. Con el pool lleno, el `POST /events` no
+consigue una y se rinde a los cinco segundos:
+
+```
+[outbox] la transaccion del lote fallo (3 eventos): timeout exceeded when trying to connect
+```
+
+**No fue CPU (19 % de pico), ni memoria, ni disco.** Fue este número.
+
+### Quién compite por esas conexiones
+
+Dos consumidores dentro del mismo proceso:
+
+1. el **`POST /events`**, que abre una transacción por lote para escribir el outbox
+2. el **lazo de drenado del relay**, que reclama filas y las marca `SENT` sin parar
+
+Y el relay no se detiene: cuanto más grande es la tabla, más tarda cada reclamo
+y más tiempo retiene su conexión.
+
+### ⚠ En AWS no se inyecta
+
+`terraform/modules/tenant/main.tf` **no pone `C3_BD_POOL` en la task
+definition**, así que en Fargate manda el default de 10. Subirlo requiere añadir
+la variable ahí — no basta con cambiar el default del código si lo que corre es
+el contenedor desplegado.
+
+### Qué se pierde cuando pasa
+
+Nada recuperable, y esto es lo importante: **la firma es inline en el
+`POST /events`**, antes del commit, y el pipeline acumula el lote en memoria
+hasta escribirlo entero. Si la transacción falla, el lote completo se cae y **no
+queda fila en el outbox** — ni `PENDING` ni `FAILED`. Solo se detecta cruzando
+el manifiesto del orquestador contra las bases.

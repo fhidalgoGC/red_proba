@@ -264,22 +264,157 @@ if [ "$ANTES" != "?" ] && [ "$CLIENTES" -lt "$ANTES" ]; then
   aviso "lo que hubiera en ese outbox no está en ningún otro sitio."
 fi
 
-# ── Cuotas · lo que no se arregla con reintentar ────────────────────────────
-CUOTAS=0
-if [ "$CLIENTES" -gt 39 ]; then
-  echo; aviso "RDS · $((CLIENTES + 1)) instancias (una por cliente + la de C4)."
-  tenue "la cuota por defecto son 40 por región. Por encima, el apply falla a mitad."
+# ── QUÉ SE REINICIA · lo que hay que saber ANTES, no después ────────────────
+#
+# ⚠ SUBIR EL NÚMERO DE CLIENTES NO ES SOLO AÑADIR.
+#
+#   "Añadir 49 tenants" suena aditivo y en su mayor parte lo es: los tenants que
+#   ya existen no se tocan. Pero hay DOS cosas que sí, y las dos matan una
+#   corrida en vuelo sin que nada lo anuncie:
+#
+#   1. EL ORQUESTADOR, SIEMPRE. La lista de destinos vive en su task definition
+#      (ORQ_TENANTS_JSON). Cambiar el número de tenants cambia esa variable, y
+#      eso es una REVISIÓN NUEVA: ECS reemplaza la task. Un `POST /batch` en
+#      curso muere con ella, y el log de esa corrida se pierde — vive en el
+#      disco efímero de la task (T-07).
+#
+#      No hay forma de evitarlo: que el orquestador conozca los N endpoints es
+#      justamente lo que se está pidiendo.
+#
+#   2. LOS TENANTS Y C4, SOLO SI CAMBIA `az_count`. La lista de subnets del
+#      service cambia y ECS despliega de nuevo. Medido en el plan de 50:
+#
+#        --az 2  →  17 recursos modificados: los 14 interface endpoints, el
+#                   service de C4, el del orquestador Y el del tenant 01
+#        --az 1  →   1 recurso modificado: el service del orquestador
+#
+#      Es decir: con `--az 1` los tenants existentes NO se tocan.
+#
+#   El dato NO se pierde en ninguno de los dos casos: el outbox está en RDS y
+#   la RDS no se reemplaza. Lo que se pierde es la corrida en vuelo.
+AZ_ANTES=""
+[ -f "$CLIENTES_TFVARS" ] && AZ_ANTES=$(grep -oE 'az_count = [0-9]+' "$CLIENTES_TFVARS" | grep -oE '[0-9]+$')
+
+if hay_estado && [ "$(perilla)" != "0" ]; then
+  echo
+  aviso "SE REINICIA el orquestador — su task definition lleva la lista de tenants"
+  tenue "una corrida en vuelo muere con la task, y su log con ella (disco efímero)"
+  if [ -n "$AZ_ANTES" ] && [ "$AZ_ANTES" != "$AZ" ]; then
+    aviso "SE REINICIAN también los $ANTES tenant(s) y C4 — az_count $AZ_ANTES → $AZ cambia sus subnets"
+    tenue "para NO tocarlos, mantén las AZ:  sh terraform:deploy --clients $CLIENTES --az $AZ_ANTES"
+  else
+    tenue "los $ANTES tenant(s) que ya existen NO se tocan (az_count sigue en $AZ)"
+  fi
+  tenue "en los dos casos el dato sobrevive: el outbox está en RDS y la RDS no se reemplaza"
+fi
+
+# ── Cuotas · SE MIRAN, no se suponen ────────────────────────────────────────
+#
+# ⚠ POR QUE ESTO BLOQUEA Y NO SOLO AVISA.
+#
+#   Antes aquí había un aviso con la cuota POR DEFECTO escrita a mano ("son 40").
+#   Un aviso no sirve: cuando la cuota de RDS no alcanza, el apply no falla al
+#   principio — crea las instancias que caben, se queda sin cupo a mitad y
+#   revienta con `InstanceQuotaExceeded` dejando el estado A MEDIAS, con 38 RDS
+#   facturando y sin despliegue utilizable. Deshacerlo es otro apply de media
+#   hora.
+#
+#   Y la cuota real no tiene por qué ser la de por defecto: alguien pudo pedir
+#   el aumento la semana pasada, o pudo bajarla. Preguntar cuesta una llamada.
+#
+# ⚠ LAS INSTANCIAS AJENAS TAMBIÉN CUENTAN. La cuota es por región y por cuenta,
+#   no por proyecto: las RDS de otro equipo en esta misma región consumen el
+#   mismo cupo. Por eso se cuenta lo que hay VIVO, no solo lo nuestro.
+CUOTAS=""
+
+cuota() { # <service-code> <quota-code>  → el valor, o vacío si no se pudo leer
+  aws service-quotas get-service-quota --service-code "$1" --quota-code "$2" \
+    --region "$REGION" --query 'Quota.Value' --output text 2>/dev/null \
+    | grep -E '^[0-9]+' | cut -d. -f1
+}
+
+# ── RDS · la que de verdad rompe el apply ───────────────────────────────────
+RDS_NECESARIAS=$((CLIENTES + 1))          # una por cliente + la de C4
+RDS_CUOTA=$(cuota rds L-7B6409FD)
+RDS_VIVAS=$(aws rds describe-db-instances --region "$REGION" \
+  --query 'length(DBInstances)' --output text 2>/dev/null)
+case "${RDS_VIVAS:-}" in ''|*[!0-9]*) RDS_VIVAS=0 ;; esac
+
+# Las nuestras ya cuentan dentro de RDS_VIVAS y Terraform las reutiliza, así
+# que lo que se suma a la cuota es lo AJENO más lo que vamos a tener nosotros.
+RDS_NUESTRAS=$(aws rds describe-db-instances --region "$REGION" \
+  --query "length(DBInstances[?starts_with(DBInstanceIdentifier, '$(grep -E '^[[:space:]]*name_prefix' "$DIR/terraform.tfvars" 2>/dev/null | sed 's/.*= *"\(.*\)".*/\1/' | head -1)')])" \
+  --output text 2>/dev/null)
+case "${RDS_NUESTRAS:-}" in ''|*[!0-9]*) RDS_NUESTRAS=0 ;; esac
+RDS_AJENAS=$((RDS_VIVAS - RDS_NUESTRAS))
+[ "$RDS_AJENAS" -lt 0 ] && RDS_AJENAS=0
+RDS_TOTAL=$((RDS_AJENAS + RDS_NECESARIAS))
+
+if [ -z "$RDS_CUOTA" ]; then
+  echo; aviso "no pude leer la cuota de RDS · necesitarás $RDS_NECESARIAS instancias"
   tenue "  aws service-quotas get-service-quota --service-code rds --quota-code L-7B6409FD"
-  CUOTAS=1
+elif [ "$RDS_TOTAL" -gt "$RDS_CUOTA" ]; then
+  echo
+  malo "RDS · NO CABEN. Cuota $RDS_CUOTA por región · harían falta $RDS_TOTAL"
+  printf '      %s%s cliente(s) + 1 de C4 = %s' "$A_GRIS" "$CLIENTES" "$RDS_NECESARIAS"
+  [ "$RDS_AJENAS" -gt 0 ] && printf ', mas %s ajenas ya vivas' "$RDS_AJENAS"
+  printf '%s\n' "$A_FIN"
+  aviso "el apply NO falla al empezar: crea las que caben y revienta a mitad"
+  tenue "con $((RDS_CUOTA - RDS_AJENAS - 1)) tenants sí cabe hoy:  sh terraform:deploy --clients $((RDS_CUOTA - RDS_AJENAS - 1))"
+  tenue "pedir el aumento (TARDA DÍAS, no es un reintento):"
+  printf '%s        aws service-quotas request-service-quota-increase \\\n' "$A_GRIS"
+  printf '          --service-code rds --quota-code L-7B6409FD \\\n'
+  printf '          --desired-value %s --region %s%s\n' "$((RDS_TOTAL + 10))" "$REGION" "$A_FIN"
+  CUOTAS=bloqueante
+else
+  ok "RDS · $RDS_TOTAL de $RDS_CUOTA instancias — cabe"
 fi
-if [ "$CLIENTES" -ge 50 ]; then
-  echo; aviso "KMS · a 2.000 ev/s son 2.000 Sign/s y la cuota por defecto es 1.000/s (ECC)."
-  tenue "sin el aumento a 3.000, la prueba mide throttling en vez de arquitectura (docs/08-limites.md)"
-  aviso "Fargate · ~106 tareas a 1–2 vCPU son ~150 vCPU; la cuota viene muy por debajo."
-  tenue "sin el aumento, las tareas se quedan en PROVISIONING y la corrida se cancela"
-  CUOTAS=1
+
+# ── KMS · no rompe el apply, falsea la MEDICIÓN ─────────────────────────────
+#
+# Se firma una vez por evento con una llave Ed25519, y eso cuenta contra la
+# cuota de operaciones criptográficas ECC. Cuando no alcanza, KMS responde
+# ThrottlingException: la latencia crece, el outbox se llena y lo que mides es
+# la cuota, no la arquitectura. No hay error que lo diga.
+if [ "$CLIENTES" -ge 20 ]; then
+  KMS_CUOTA=$(cuota kms L-DC14942D)
+  if [ -n "$KMS_CUOTA" ] && [ "$KMS_CUOTA" -lt 3000 ]; then
+    echo; aviso "KMS · operaciones ECC a $KMS_CUOTA/s. El perfil de carga vive por encima"
+    tenue "(hasta 2.000 Sign/s, y el valle son 900). Con esto mides throttling."
+    tenue "  aws service-quotas request-service-quota-increase --service-code kms \\"
+    tenue "    --quota-code L-DC14942D --desired-value 3000 --region $REGION"
+    tenue "detalle: docs/08-limites.md"
+    CUOTAS=${CUOTAS:-aviso}
+  elif [ -n "$KMS_CUOTA" ]; then
+    ok "KMS · $KMS_CUOTA ops ECC/s — alcanza"
+  fi
 fi
-[ "$CUOTAS" = "1" ] && tenue "las cuotas se piden con DÍAS de anticipación — no son un reintento"
+
+# ── Fargate · si no alcanza, las tareas no salen de PROVISIONING ────────────
+if [ "$CLIENTES" -ge 20 ]; then
+  # 1 vCPU por tenant + 2 del orquestador + 1 por réplica de C4.
+  VCPU=$((CLIENTES + 4))
+  FG_CUOTA=$(cuota fargate L-3032A538)
+  if [ -n "$FG_CUOTA" ] && [ "$FG_CUOTA" -lt "$VCPU" ]; then
+    echo; malo "Fargate · ~$VCPU vCPU y la cuota es $FG_CUOTA"
+    tenue "las tareas se quedan en PROVISIONING y la corrida se cancela sola"
+    CUOTAS=bloqueante
+  elif [ -n "$FG_CUOTA" ]; then
+    ok "Fargate · ~$VCPU de $FG_CUOTA vCPU — cabe"
+  fi
+fi
+
+if [ "$CUOTAS" = "bloqueante" ]; then
+  echo
+  if [ "$SI" = "1" ]; then
+    aviso "--si dado: se continúa igual. El apply puede quedar a medias."
+  else
+    printf '  %s¿Seguir de todas formas? El apply puede quedar A MEDIAS. [s/N] %s' "$A_FUERTE" "$A_FIN"
+    if [ -t 0 ]; then read -r RC < /dev/tty; else RC=""; fi
+    case "$RC" in s|S|si|SI|Si|y|Y|yes) ;; *) printf '\n  cancelado · no se tocó nada\n\n'; exit 1 ;; esac
+  fi
+fi
+[ -n "$CUOTAS" ] && tenue "las cuotas se piden con DÍAS de anticipación — no son un reintento"
 
 # ── La lista de tenants ─────────────────────────────────────────────────────
 LISTA=$(awk -v n="$CLIENTES" 'BEGIN { for (i = 1; i <= n; i++) printf "%s\"%02d\"", (i > 1 ? ", " : ""), i }')

@@ -205,3 +205,42 @@ tick en vuelo termina solo, y lo que no llegue a publicarse **se queda
 toma.
 
 Nada se pierde porque nada se borró del outbox.
+
+
+---
+
+## Medido · el relay es el 86 % de la latencia de C3
+
+Corrida de 39 tenants a 781 ev/s durante 600 s, mediana por documento sobre
+468 678:
+
+| tramo | | p50 |
+|---|---|---|
+| `e0→e1` | canonizar (JCS) | < 1 ms |
+| `e1→e2` | **firmar** con KMS | 6 ms |
+| `e2→e3` | cifrar AES-256-GCM | < 1 ms |
+| `e3→e4` | commit del outbox | 8 ms |
+| **`e4→e5`** | **espera a que el relay reclame** | **227 ms** |
+| `e5→e6` | publicar a SQS | 16 ms |
+| | **C3 completo** | **263 ms** |
+
+**No es saturación, es el periodo del temporizador.** El relay despierta cada
+`OUTBOX_POLL_MS = 500`, así que una fila espera de media medio periodo: 250 ms
+teóricos, 227 medidos. Los 39 tenants dieron entre **221 y 236 ms** — quince
+milisegundos de dispersión sobre casi medio millón de documentos. Eso no es un
+sistema bajo presión.
+
+**Bajar `OUTBOX_POLL_MS` a 100 recortaría ~180 ms del extremo a extremo** sin
+tocar arquitectura ni gastar más. Es la perilla que más mueve la latencia de
+toda la PoC.
+
+⚠ El cliente **no** espera esos 263 ms: C3 contesta `202` en **29 ms**, en
+cuanto el documento tiene commit. El resto ocurre después, y por eso el evento
+sobrevive aunque la tarea muera — ya está en disco.
+
+### El drenado funcionó
+
+`0 pendientes` y `0 fallidos` en las 39 bases, con `intentos_max = 1`: ninguna
+fila se quedó atascada ni necesitó un segundo intento. A 20 ev/s por tenant el
+lazo de drenado va sobrado — el techo de «10 mensajes por tick» que el drenado
+existe para evitar no se acercó.

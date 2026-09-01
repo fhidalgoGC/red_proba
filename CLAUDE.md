@@ -71,6 +71,15 @@ luego `G`, luego `O`.
 >
 > Detalle en [orquestador/README.md](orquestador/README.md).
 
+## Resultados
+
+[docs/runs/](docs/runs/README.md) — lo que midió cada corrida, con los datos
+crudos. La del 2026-09-01 (39 tenants, 600 s, 781 ev/s) respondió las cuatro
+preguntas: **326 ms** de extremo a extremo, **781 ev/s** sostenidos, **cero
+pérdida** entre C3 y C4 (468.678 = 468.678), y el techo resultó no ser KMS sino
+dos variables de entorno — `OUTBOX_POLL_MS` para la latencia y `C3_BD_POOL` para
+los errores.
+
 ## Documentos
 
 1. [Arquitectura y decisiones](docs/01-arquitectura.md) — D-01 a D-11, el
@@ -141,11 +150,27 @@ contenedor, no la ruta.
 ### Desplegar en AWS
 
 ```bash
-sh imagenes                       # construye las tres y las empuja a ECR
-sh terraform:deploy --clients 1   # la prueba inicial · 1 tenant (máximo 200)
-sh terraform:deploy --down        # apagar: cómputo y endpoints a cero
-sh terraform:deploy --estado      # qué hay desplegado
+sh imagenes                             # construye las tres y las empuja a ECR
+sh terraform:deploy --clients 1         # la prueba inicial · 1 tenant (máximo 200)
+sh terraform:deploy --clients 50 --az 1 # la corrida real · añade 49, no recrea 50
+sh terraform:deploy --down              # apagar: cómputo y endpoints a cero
+sh terraform:deploy --estado            # qué hay desplegado
 ```
+
+**Subir el número de clientes añade, no recrea:** el `for_each` va sobre la
+lista de tenants, así que los que ya existen conservan su RDS y su outbox. Pero
+**el orquestador se reinicia siempre** —la lista de destinos vive en su task
+definition— y con ella muere cualquier corrida en vuelo y su log, que está en el
+disco efímero de la task. Si además cambia `az_count`, se reinician también los
+tenants que ya existían y C4; `--az 1` evita eso. El dato no se pierde en ningún
+caso: está en RDS y la RDS no se reemplaza.
+
+⚠ **Las cuotas se miran antes, y hay una que no da.** `terraform:deploy` las
+consulta contra la cuenta y se planta si no caben. Medido en `us-west-2`: **RDS
+son 40 por región y 50 tenants necesitan 51**. Cuando no alcanza, el apply no
+falla al empezar — crea las que caben y revienta a mitad, dejando el estado a
+medias y bases facturando. Detalle y comandos en
+[terraform/50client/README.md](terraform/50client/README.md).
 
 **Las imágenes van primero.** `terraform:deploy` no enciende si los repos de
 ECR están vacíos, y hace bien: unas tareas con imagen inexistente no fallan el

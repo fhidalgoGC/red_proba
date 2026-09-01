@@ -289,6 +289,11 @@ module "orq" {
   # bastion apunte a un nombre y no a una IP que caduca.
   namespace_id = module.network.namespace_c3_id
 
+  # ⚠ El tope de expedientes del manifiesto (O-08). Con 1 tenant el default del
+  #   codigo sobra; a 50 se alcanza en ~100 s y P4 sale con asterisco. Ver
+  #   modules/orq/variables.tf.
+  manifiesto_tope = var.orq_manifiesto_tope
+
   desired_count      = var.desired_count
   log_retention_days = var.log_retention_days
 }

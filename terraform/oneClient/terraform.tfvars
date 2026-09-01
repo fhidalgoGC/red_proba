@@ -40,3 +40,13 @@ imagen_tag = "humo"
 az_count = 1
 
 presupuesto_mensual_usd = "50"
+
+# ── El tope del manifiesto de O-08 ────────────────────────────────────────
+# Con 39 tenants a ~926 ev/s y `eventos_por_hilo: 1` -cada evento es su propio
+# expediente- el default de 200.000 se agota en 216 SEGUNDOS. Pasado el tope el
+# manifiesto sale `truncado: true` y la conciliacion se niega a dar ok: la
+# corrida entera queda sin responder P4 aunque todos los eventos hayan llegado.
+#
+# 1.000.000 cubre la corrida de 600 s (~556.000 documentos) con margen, y son
+# ~220 MB de heap sobre los 6.144 que declara la task.
+orq_manifiesto_tope = 1000000

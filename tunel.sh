@@ -116,6 +116,14 @@ command -v session-manager-plugin >/dev/null 2>&1 \
 
 [ -d "$DIR" ] || morir "no existe terraform/$ESCENARIO"
 
+# El nombre del cluster de C4 lo decide `name_prefix`. Estaba escrito a mano
+# como `rpf-one-c4`: con otro prefijo -o con el escenario cambiado por
+# ESCENARIO=- el `list-tasks` devolvia vacio y el error era "no hay task de C4
+# corriendo", que apunta al despliegue y no al script.
+PREFIJO=$(grep -E '^[[:space:]]*name_prefix' "$DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*= *"\(.*\)".*/\1/' | head -1)
+[ -n "$PREFIJO" ] || morir "no pude leer name_prefix de terraform/$ESCENARIO/terraform.tfvars"
+
 BASTIONES=$(tf output -json bastiones 2>/dev/null)
 BAST_C3=$(printf '%s' "$BASTIONES" | jq -r '.c3 // empty' 2>/dev/null)
 BAST_C4=$(printf '%s' "$BASTIONES" | jq -r '.c4 // empty' 2>/dev/null)
@@ -127,8 +135,21 @@ if [ -z "$BAST_C3" ] && [ -z "$BAST_C4" ]; then
   printf '\n'; exit 1
 fi
 
-DB_C3=$(tf output -json db_endpoints 2>/dev/null | jq -r '.tenants // {}' 2>/dev/null)
-DB_C4=$(tf output -json db_endpoints 2>/dev/null | jq -r '.c4 // empty' 2>/dev/null)
+SALIDA=$(tf output -json 2>/dev/null)
+DB_C3=$(printf '%s' "$SALIDA" | jq -r '.db_endpoints.value.tenants // {}' 2>/dev/null)
+DB_C4=$(printf '%s' "$SALIDA" | jq -r '.db_endpoints.value.c4 // empty' 2>/dev/null)
+
+# ⚠ LOS TENANTS SALEN DE `api_hosts`, NO DE `db_endpoints`.
+#
+#   `db_endpoints` esta VACIO con el despliegue apagado -RDS no escala a cero,
+#   asi que apagar destruye las instancias-. Cuando la lista se derivaba de
+#   ahi, `sh tunel --lista` con las bases caidas no enseñaba NI UN SOLO API,
+#   aunque los API existieran y fueran alcanzables. Parecia que no habia nada
+#   desplegado.
+#
+#   `api_hosts` es un nombre de Cloud Map calculado de var.tenants: existe
+#   siempre, encendido o apagado.
+TENANTS=$(printf '%s' "$SALIDA" | jq -r '.api_hosts.value // {} | keys[]' 2>/dev/null)
 
 # ── Argumentos ──────────────────────────────────────────────────────────────
 QUE=${1:-}; [ $# -gt 0 ] && shift
@@ -163,6 +184,16 @@ if [ "$QUE" = "--cerrar" ]; then
     done
   }
 
+  # ⚠ Y TERMINAR LA SESION EN AWS, que sobrevive al proceso local.
+  #   Sin esto se acumulan hasta el tope de sesiones concurrentes y las
+  #   aperturas nuevas fallan sin decir por que. Ver sql.sh.
+  terminar_sesion() {
+    [ -f "$1" ] || return 0
+    _sid=$(grep -oE 'SessionId: [A-Za-z0-9_-]+' "$1" | head -1 | cut -d' ' -f2)
+    [ -n "$_sid" ] && aws ssm terminate-session --session-id "$_sid" \
+      --region "$(aws configure get region 2>/dev/null || echo us-west-2)" >/dev/null 2>&1
+  }
+
   if [ -d "$TUNELES" ]; then
     for f in "$TUNELES"/*.pid; do
       [ -f "$f" ] || continue
@@ -170,6 +201,8 @@ if [ "$QUE" = "--cerrar" ]; then
       _pid=$(cat "$f" 2>/dev/null)
       [ -n "$_pid" ] && kill "$_pid" 2>/dev/null
       cerrar_puerto "${_nom##*-}"   # orq-9090 -> 9090
+      terminar_sesion "$TUNELES/$_nom.log"
+      rm -f "$TUNELES/$_nom.log"
       ok "$_nom"
       _n=$((_n + 1))
       rm -f "$f"
@@ -186,9 +219,26 @@ if [ "$QUE" = "--cerrar" ]; then
     done
   done
 
+  # Barrido final: sesiones vivas en AWS sin proceso local que las sostenga.
+  # Es el estado en el que queda todo tras un Ctrl-C o una version vieja de
+  # este script, y el que hace fallar el siguiente `sh sql db --todos`.
+  _reg=$(aws configure get region 2>/dev/null || echo us-west-2)
+  _viejas=$(aws ssm describe-sessions --state Active --region "$_reg" \
+    --query "Sessions[?Target=='${BAST_C3:-x}'||Target=='${BAST_C4:-x}'].SessionId" \
+    --output text 2>/dev/null | tr '\t' '\n' | grep . || true)
+  if [ -n "$_viejas" ]; then
+    _c=0
+    for _s in $_viejas; do
+      aws ssm terminate-session --session-id "$_s" --region "$_reg" >/dev/null 2>&1 && _c=$((_c + 1))
+    done
+    [ "$_c" != "0" ] && { ok "$_c sesion(es) de SSM terminadas en AWS"; _n=$((_n + _c)); }
+  fi
+
   [ "$_n" = "0" ] && tenue "no habia ninguno abierto"
   printf '\n'; exit 0
 fi
+
+sin_ceros() { echo "$1" | sed 's/^0*//'; }
 
 # ── La lista ────────────────────────────────────────────────────────────────
 if [ "$QUE" = "--lista" ] || [ "$QUE" = "" ] || [ "$QUE" = "-l" ]; then
@@ -196,27 +246,62 @@ if [ "$QUE" = "--lista" ] || [ "$QUE" = "" ] || [ "$QUE" = "-l" ]; then
   printf '%s│  tunel · lo que puedes abrir                 │%s\n' "$A_FUERTE" "$A_FIN"
   printf '%s└─────────────────────────────────────────────┘%s\n\n' "$A_FUERTE" "$A_FIN"
 
+  # Un host de RDS entero son 60 caracteres y el que importa es el primer
+  # tramo. Vacio = la base no existe, que con `rds_persistente=false` es lo
+  # normal estando apagado.
+  corto() { [ -n "${1:-}" ] && printf '%s…:5432' "${1%%.*}" || printf '%s' "— RDS apagada"; }
+
+  _n=$(printf '%s\n' "$TENANTS" | grep -c . 2>/dev/null || echo 0)
+  _primero=$(printf '%s\n' "$TENANTS" | head -1)
+  _ultimo=$(printf '%s\n' "$TENANTS" | tail -1)
+
   printf '  %-22s %-14s %s\n' "COMANDO" "LOCAL" "DESTINO"
   printf '  %-22s %-14s %s\n' "sh tunel orq" "9090" "orq.poc.local:9090"
-  for t in $(printf '%s' "$DB_C3" | jq -r 'keys[]' 2>/dev/null); do
-    _h=$(printf '%s' "$DB_C3" | jq -r --arg k "$t" '.[$k]')
-    printf '  %-22s %-14s %s\n' "sh tunel api $t" "$((18000 + $(echo "$t" | sed 's/^0*//')))" "api-$t.poc.local:8080"
-    printf '  %-22s %-14s %s\n' "sh tunel db $t" "$((15400 + $(echo "$t" | sed 's/^0*//')))" "${_h%%.*}…:5432"
-  done
+
+  # ⚠ CON 50 TENANTS, ENUMERAR SON 100 LINEAS y la tabla deja de leerse: lo
+  #   util -que el puerto se DERIVA del numero- se pierde entre el ruido, y lo
+  #   que de verdad hay que ver -los dos bastiones y C4- se va scrolleando
+  #   fuera de la pantalla. A partir de 6 se enseña la regla y los extremos.
+  if [ "$_n" -le 6 ]; then
+    for t in $TENANTS; do
+      printf '  %-22s %-14s %s\n' "sh tunel api $t" "$((18000 + $(sin_ceros "$t")))" "api-$t.poc.local:8080"
+    done
+    for t in $TENANTS; do
+      _h=$(printf '%s' "$DB_C3" | jq -r --arg k "$t" '.[$k] // empty')
+      printf '  %-22s %-14s %s\n' "sh tunel db $t" "$((15400 + $(sin_ceros "$t")))" "$(corto "$_h")"
+    done
+  else
+    printf '  %-22s %-14s %s\n' "sh tunel api NN" "18000+NN" "api-NN.poc.local:8080"
+    printf '  %-22s %-14s %s\n' "sh tunel db NN"  "15400+NN" "RDS del tenant-NN:5432"
+    printf '  %s%-22s %s%s\n' "$A_GRIS" "" "NN de $_primero a $_ultimo · $_n tenants" "$A_FIN"
+  fi
+
   printf '  %-22s %-14s %s\n' "sh tunel c4" "13003" "task de C4:3003"
-  printf '  %-22s %-14s %s\n' "sh tunel c4db" "15499" "${DB_C4%%.*}…:5432"
+  printf '  %-22s %-14s %s\n' "sh tunel c4db" "15499" "$(corto "$DB_C4")"
 
   printf '\n'
-  ok "bastion c3 · ${BAST_C3:-—}"
-  ok "bastion c4 · ${BAST_C4:-—}"
+  if [ "$_n" = "1" ]; then _cuantos="el API del tenant y su base"
+  else _cuantos="los $_n API y las $_n bases de tenant"; fi
+  ok "bastion c3 · ${BAST_C3:-—}  ·  el orquestador, $_cuantos"
+  ok "bastion c4 · ${BAST_C4:-—}  ·  el health de C4 y su base"
+  tenue "son DOS porque la RDS de C4 vive en la VPC de C4 y no hay ruta desde C3"
+
+  # Con las bases caidas, `sh tunel db NN` falla con "el tenant no tiene RDS" y
+  # eso suena a que el tenant esta mal. Decirlo aqui evita el viaje.
+  if [ "$(printf '%s' "$DB_C3" | jq -r 'length' 2>/dev/null)" = "0" ]; then
+    printf '\n'; aviso "no hay ninguna RDS viva · el despliegue esta apagado y rds_persistente=false las borro"
+    tenue "los tuneles de 'db NN' y 'c4db' no funcionaran hasta encender"
+  fi
+
   printf '\n'
   tenue "cada tunel es BLOQUEANTE: uno por terminal, Ctrl-C para cerrarlo"
-  tenue "la contrasena de las bases:  cat ACCESO.md"
+  tenue "en segundo plano:  --fondo    ·  cerrarlos todos:  sh tunel --cerrar"
+  tenue "las N bases de una vez:  sh sql db --todos --resumen"
+  tenue "la contrasena de las bases:  sh acceso --clave"
   printf '\n'; exit 0
 fi
 
 # ── Resolver destino ────────────────────────────────────────────────────────
-sin_ceros() { echo "$1" | sed 's/^0*//'; }
 
 case "$QUE" in
   orq)
@@ -234,10 +319,10 @@ case "$QUE" in
     : "${PUERTO_LOCAL:=$((15400 + $(sin_ceros "$NN")))}" ;;
   c4)
     BAST=$BAST_C4; PUERTO=3003
-    HOST=$(aws ecs list-tasks --cluster "$(basename "$DIR" | sed 's/.*/rpf-one-c4/')" \
+    HOST=$(aws ecs list-tasks --cluster "$PREFIJO-c4" \
              --desired-status RUNNING --query 'taskArns[0]' --output text 2>/dev/null)
-    [ -n "$HOST" ] && [ "$HOST" != "None" ] || morir "no hay task de C4 corriendo"
-    HOST=$(aws ecs describe-tasks --cluster rpf-one-c4 --tasks "$HOST" \
+    [ -n "$HOST" ] && [ "$HOST" != "None" ] || morir "no hay task de C4 corriendo en el cluster $PREFIJO-c4"
+    HOST=$(aws ecs describe-tasks --cluster "$PREFIJO-c4" --tasks "$HOST" \
              --query 'tasks[0].attachments[0].details[?name==`privateIPv4Address`].value' \
              --output text 2>/dev/null)
     [ -n "$HOST" ] || morir "no pude leer la IP de la task de C4"

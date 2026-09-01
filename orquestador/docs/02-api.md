@@ -64,7 +64,7 @@ Todos los campos son opcionales.
 | Campo | Por defecto | Qué hace |
 |---|---|---|
 | `id` | `corrida-<fecha>` | Nombra los logs de **los dos lados**. Un id ya usado se rechaza con 409 |
-| `client` | todos | `"all"`, el id (`"tenant-02"`), o el índice **empezando en 1** (acepta `1` y `"1"`) |
+| `client` | todos | **CUÁNTOS destinos**, o cuál. Un número son los N **primeros** tenants; `"all"`, todos; un id (`"tenant-02"`), ese solo |
 | `seconds` | 20 | Cuánto tiempo se **envía**. El informe dura más |
 
 ### Cuánto — tres formas excluyentes
@@ -73,6 +73,36 @@ Todos los campos son opcionales.
 |---|---|---|
 | `request.client` | — | `{min, max}` **PETICIONES HTTP** por cliente y por segundo. Cada segundo se sortea un entero dentro del rango y ese es el número exacto de peticiones que sale |
 | `events.client` | tamaño fijo | `{min, max}` **documentos dentro de cada petición**. Se sortea uno POR PETICIÓN: dos del mismo segundo pueden llevar 3 y 9 |
+
+### `client` es una CANTIDAD de destinos, no un índice
+
+```json
+{ "client": 40 }            → los 40 PRIMEROS tenants (tenant-01 … tenant-40)
+{ "client": "all" }         → todos los que haya desplegados
+{ "client": "tenant-07" }   → ese y solo ese
+{ "client": 1 }             → solo tenant-01
+```
+
+Antes un número era un **índice 1-based**: `40` significaba «el tenant que hace
+40», uno solo. Cambió el 2026-09-01 porque la forma natural de pedir una prueba
+de escala es «contra 40 clientes», y con la semántica vieja el número de
+destinos no se podía elegir sin volver a desplegar: o `"all"`, o uno.
+
+Y fallaba **mudo en la dirección peor**. Pedías 40 y corrías contra 1, con un
+informe que parecía bueno porque no había fallado nada — solo que la carga
+ofrecida era 1/40 de la que creías.
+
+`client: 1` da lo mismo con las dos semánticas, que es lo que permitió el
+cambio sin tocar los ejemplos ni `sh start`. Para apuntar a **un** tenant que no
+sea el primero está el id literal, que además no depende del orden.
+
+⚠ **Pedir más destinos de los que hay es un error, no un recorte.** Si
+`client: 40` sobre 39 tenants devolviera los 39 en silencio, el informe diría
+«40 clientes» habiendo medido 39 — un 2,5 % que nadie ve a ojo y que invalida la
+comparación entre corridas.
+
+Ver `resolverTenants` al final de `src/corrida/corrida.service.ts`, y sus tests
+en `test/destinos.test.ts`.
 | `rate` | 40 | Ritmo **plano** en ev/s por tenant |
 | `events` | — | **Total** de eventos, repartido en la ventana con un número aleatorio de llamadas por tenant |
 
@@ -216,7 +246,7 @@ otro JSON que escribe el registro. Los ids que hay están en `GET /batch`, y un
 Todos llevan el motivo concreto, no un mensaje genérico.
 
 ```jsonc
-400  { "error": "client '99' no existe. Hay 2: 1=tenant-01, 2=tenant-02. Tambien vale \"all\"." }
+400  { "error": "client '99' no vale. Hay 39 tenant(s): un numero de 1 a 39 son los N PRIMEROS destinos, \"all\" son los 39, y un id literal (tenant-01) es ese solo." }
 400  { "error": "client debe ser texto o numero, vino boolean (true)." }
 400  { "error": "request.client: max (20) es menor que min (80)" }
 400  { "error": "rate y request son excluyentes: …" }

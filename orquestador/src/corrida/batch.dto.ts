@@ -57,8 +57,12 @@ export class LanzarBatchDto {
   @ApiPropertyOptional({
     example: 'all',
     description:
-      'A quien pegarle: "all", el id del tenant ("tenant-02"), o su indice ' +
-      'empezando en 1 (acepta 1 y "1"). Por defecto, todos.',
+      'CUANTOS destinos, o cual. Un NUMERO son los N PRIMEROS tenants: ' +
+      '40 = tenant-01 … tenant-40 (acepta 40 y "40"). "all" son todos los ' +
+      'que haya. Un id literal ("tenant-07") es ese y solo ese. Por defecto, ' +
+      'todos. ⚠ El numero NO es un indice: pedir mas de los que hay es un ' +
+      'error, no un recorte — un recorte silencioso mediria N-1 clientes ' +
+      'diciendo que midio N.',
   })
   client?: string | number;
 

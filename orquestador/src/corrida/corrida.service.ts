@@ -27,10 +27,14 @@ const TOPE_CONEXIONES = 2048;
 export interface OpcionesCorrida {
   id?: string;
   /**
-   * A quien pegarle: 'all', el id literal ('tenant-01'), o el indice 1-based.
+   * CUANTOS destinos, o cual: un numero son los N PRIMEROS tenants, 'all' son
+   * todos, y un id literal ('tenant-07') es ese solo.
    *
-   * El indice acepta numero y cadena — `1` y `"1"` son lo mismo — porque
-   * escribirlo a mano de las dos formas es igual de natural.
+   * Acepta numero y cadena — `40` y `"40"` son lo mismo — porque escribirlo a
+   * mano de las dos formas es igual de natural.
+   *
+   * Ver `resolverTenants` al final del archivo: un numero era un INDICE y
+   * ahora es una CANTIDAD.
    */
   client?: string | number;
   seconds?: number;
@@ -280,35 +284,76 @@ export class CorridaService {
   // -------------------------------------------------------------------------
 
   private resolverTenants(client: unknown): Tenant[] {
-    const todos = this.config.tenants;
-    if (todos.length === 0) throw new Error('config/tenants.yaml no tiene ningun tenant');
+    return resolverTenants(this.config.tenants, client);
+  }
+}
 
-    if (client === undefined || client === null) return todos;
+/**
+ * A quien le pega una corrida.
+ *
+ * ⚠ UN NUMERO ES UNA CANTIDAD DE DESTINOS, NO UN INDICE.
+ *
+ *   `client: 40`  →  los 40 PRIMEROS tenants (tenant-01 … tenant-40)
+ *   `client: 1`   →  solo tenant-01
+ *   `"all"`       →  todos los que haya
+ *   `"tenant-07"` →  ese y solo ese
+ *
+ * Antes el numero era un indice 1-based y `40` significaba "el tenant que hace
+ * 40", uno solo. Se cambio porque la forma natural de pedir una prueba de
+ * escala es "contra 40 clientes", y con la semantica vieja el numero de
+ * destinos no se podia elegir sin volver a desplegar: o `"all"`, o uno.
+ *
+ * Y fallaba MUDO en la direccion peor. Pedias 40 y corrias contra 1, con un
+ * informe que parecia bueno porque no habia fallado nada — solo que la carga
+ * ofrecida era 1/40 de la que creias.
+ *
+ * `client: 1` da lo mismo con las dos semanticas, que es lo que permite el
+ * cambio sin tocar los ejemplos ni `sh start`. Para apuntar a UN tenant que no
+ * sea el primero esta el id literal, que ademas no depende del orden.
+ *
+ * Se exporta —en vez de quedarse privada— porque es la unica regla de la clase
+ * que se puede equivocar en silencio, y probarla a traves del servicio exigiria
+ * levantar la configuracion entera.
+ */
+export function resolverTenants(todos: readonly Tenant[], client: unknown): Tenant[] {
+  if (todos.length === 0) throw new Error('config/tenants.yaml no tiene ningun tenant');
 
-    // Se comprueba el TIPO antes de convertir. Sin esto, `Number(true)` da 1 y
-    // `"client": true` acabaria corriendo contra el primer tenant en silencio
-    // — una peticion mal formada produciendo una corrida que parece buena.
-    if (typeof client !== 'string' && typeof client !== 'number') {
-      throw new Error(
-        `client debe ser texto o numero, vino ${typeof client} (${JSON.stringify(client)}). ` +
-        `Vale "all", el id del tenant, o su indice empezando en 1.`,
-      );
-    }
+  if (client === undefined || client === null) return [...todos];
 
-    if (typeof client === 'string') {
-      if (client === 'all') return todos;
-      const porId = todos.find((t) => t.id === client);
-      if (porId) return [porId];
-    }
-
-    const i = Number(client);
-    if (Number.isInteger(i) && i >= 1 && i <= todos.length) return [todos[i - 1]!];
-
+  // Se comprueba el TIPO antes de convertir. Sin esto, `Number(true)` da 1 y
+  // `"client": true` acabaria corriendo contra el primer tenant en silencio
+  // — una peticion mal formada produciendo una corrida que parece buena.
+  if (typeof client !== 'string' && typeof client !== 'number') {
     throw new Error(
-      `client '${client}' no existe. Hay ${todos.length}: ` +
-      todos.map((t, k) => `${k + 1}=${t.id}`).join(', ') + `. Tambien vale "all".`,
+      `client debe ser texto o numero, vino ${typeof client} (${JSON.stringify(client)}). ` +
+      `Vale "all", el id de un tenant, o CUANTOS destinos quieres.`,
     );
   }
+
+  if (typeof client === 'string') {
+    if (client === 'all') return [...todos];
+    const porId = todos.find((t) => t.id === client);
+    if (porId) return [porId];
+    // Un id que no casa no cae al numero: `Number('tenant-07')` es NaN y el
+    // error de abajo lo explica. Lo que NO puede pasar es que un id mal escrito
+    // se resuelva a otra cosa.
+  }
+
+  const n = Number(client);
+
+  // ⚠ PEDIR MAS DESTINOS DE LOS QUE HAY ES UN ERROR, NO UN RECORTE.
+  //
+  //   Si `client: 40` sobre 39 tenants devolviera los 39, el informe diria
+  //   "40 clientes" y habrias medido 39. Un 2,5% que nadie ve a ojo y que
+  //   invalida la comparacion entre corridas — justo el tipo de fallo que esta
+  //   PoC existe para no tener.
+  if (Number.isInteger(n) && n >= 1 && n <= todos.length) return todos.slice(0, n);
+
+  throw new Error(
+    `client '${client}' no vale. Hay ${todos.length} tenant(s): ` +
+    `un numero de 1 a ${todos.length} son los N PRIMEROS destinos, ` +
+    `"all" son los ${todos.length}, y un id literal (${todos[0]!.id}) es ese solo.`,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -105,7 +105,7 @@ resource "aws_ecs_task_definition" "driver" {
 
     portMappings = [{ containerPort = 9090, protocol = "tcp" }] # O-07 /status
 
-    environment = [
+    environment = concat([
       # ── Los destinos ──
       #
       # La lista la conoce Terraform: es el MISMO for_each que crea los
@@ -151,7 +151,21 @@ resource "aws_ecs_task_definition" "driver" {
       # 6.144 de 8.192 deja ~2 GiB para el resto del proceso: los buffers de
       # undici, los sockets y lo que V8 no cuenta como heap.
       { name = "NODE_OPTIONS", value = "--max-old-space-size=6144" },
-    ]
+      ],
+
+      # ── El tope del manifiesto · SOLO si se pidio ──────────────────────────
+      #
+      # Se concatena en vez de poner una entrada fija con un default repetido:
+      # si el numero viviera tambien aqui habria DOS defaults -este y el del
+      # codigo- y el dia que uno cambie el otro miente en silencio. Con null no
+      # se inyecta la variable y manda el codigo, que es su unico sitio.
+      #
+      # Ver variables.tf: a 50 tenants el default se alcanza en ~100 segundos y
+      # el manifiesto sale truncado, que es lo que deja P4 con asterisco.
+      var.manifiesto_tope == null ? [] : [
+        { name = "ORQ_MANIFIESTO_TOPE", value = tostring(var.manifiesto_tope) },
+      ],
+    )
 
     logConfiguration = {
       logDriver = "awslogs"

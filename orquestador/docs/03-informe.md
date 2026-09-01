@@ -258,3 +258,83 @@ comprobación del canonicalizador hecha desde fuera, por otro proceso.
 
 > Da a C3 sus **8 segundos de silencio** para cerrar la última ventana antes de
 > conciliar. Una lectura temprana parece un descuadre y no lo es.
+
+
+---
+
+## Medido · 39 tenants en paralelo, 600 s
+
+Corrida `test-deploy-39clients-600s-6-10-1-4` del 2026-09-01.
+`request 6-10` peticiones/s agregadas, `events 1-4` documentos por petición,
+reparto zipf, llegadas poisson.
+
+| | |
+|---|---|
+| Ritmo sostenido | **781,3 ev/s** · p50 782, p95 829, p99 851 |
+| Peticiones | 312,4/s · **2,5 documentos por petición** |
+| Latencia HTTP | p50 **29,1 ms** · p99 50,2 ms |
+| Peso | 1,44 GB canónicos · 2,21 GB en el cable (×1,53) |
+| Ofrecidos → enviados | 468 787 → 468 785 (2 por redondeo del segundo) |
+| Aceptados `202` | 468 612 |
+
+### El paralelismo, demostrado desde los dos extremos
+
+Que los 39 disparan a la vez no se supone: se mide, y con dos fuentes
+independientes.
+
+**Desde el planificador** — tenants con tráfico en cada segundo:
+
+```
+segundo 1 (parcial, 78 ms)    9 de 39
+segundo 2                    39 de 39   1023 eventos
+segundo 3                    39 de 39    578
+segundo 4                    39 de 39    614
+…                            39 de 39
+```
+
+**Desde C4**, que no sabe nada del planificador y solo ve sobres llegando:
+agrupando su inbox por segundo, **hubo tres segundos en los que recibió
+documentos de los 39 `party_id` distintos**. Esa medida es la fuerte: para que
+ocurra, los 39 API tuvieron que recibir, firmar, cifrar, escribir su outbox y
+publicar **en paralelo**. Si algo de la cadena fuera secuencial, se vería un
+tenant por segundo.
+
+De paso confirma que la pseudonimización es determinista y sin colisiones: 39
+tenants dan exactamente 39 `party_id`, y C4 nunca ve el id real.
+
+### Y en el código
+
+El paralelismo no es una casualidad del despacho, es una regla:
+
+> *«En este archivo NUNCA se hace `await` de un envío. `EmisorService.enviar()`
+> devuelve un booleano, no una promesa. Si algún día alguien le pone un await,
+> la prueba deja de medir lo que dice medir.»* — `planificador.service.ts`
+
+Es **lazo abierto (O-02)**: dispara según el reloj, no según las respuestas. Si
+esperases la respuesta para mandar lo siguiente, un sistema lento recibiría
+menos carga y medirías un sistema que se ve sano porque nadie lo está
+presionando — **omisión coordinada**, la forma más común de que una prueba de
+carga mienta.
+
+El segundo nivel es el `EmisorService`: **un `Pool` de undici por destino**, 39
+pools independientes. Si un tenant se cuelga, no bloquea a los otros 38 — para
+eso está el timeout explícito de O-05.
+
+### Los errores, y cómo leerlos
+
+173 documentos afectados de 468 785 (**0,037 %**), en **dos ráfagas** —el
+segundo 381 y la ventana 477-492—. Del 492 al 600 no hubo ninguno: se recuperó
+solo.
+
+| | peticiones | documentos | ¿pérdida? |
+|---|---|---|---|
+| HTTP `500` | 43 | 105 | **Sí** — C3 falló antes del commit |
+| `UND_ERR_HEADERS_TIMEOUT` | 24 | 68 | **66 no**, llegaron a C4 igual |
+
+**Un timeout del arnés no es una pérdida.** El inbox de C4 acabó con 66
+documentos *más* de los que este informe contó como `ok`. Por eso la
+conciliación se hace contra las bases, no contra este archivo.
+
+Pérdida real: **107 · 0,0228 %**, y los 107 salieron del mismo tenant — el único
+con una tabla de outbox siete veces mayor que las demás. Ver
+`c3/docs/06-configuracion.md`.
